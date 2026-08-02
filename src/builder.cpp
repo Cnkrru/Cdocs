@@ -363,6 +363,16 @@ static std::string replace_all(std::string s, const std::string& from, const std
 static std::string render_comments(const SiteConfig& cfg, const std::string& curLocale) {
     if (!cfg.giscus.enabled) return std::string();
     std::string lang = (curLocale == "zh-CN") ? "zh-CN" : "en";
+    // 自定义 giscus 主题（Cdocs 水墨暖调，theme/assets/css/giscus-*.css）：
+    // data-theme 指向站内 CSS 绝对 URL，前端 theme.js 在明暗切换时通过 postMessage 同步 iframe；
+    // 未配置 site.url（本地预览）时回退内置 preferred_color_scheme。
+    bool customTheme = !cfg.url.empty();
+    std::string theme = "preferred_color_scheme";
+    if (customTheme) {
+        std::string u = cfg.url;
+        while (!u.empty() && u.back() == '/') u.pop_back();
+        theme = u + "/" + curLocale + "/assets/css/giscus-" + (cfg.theme == "dark" ? "dark" : "light") + ".css";
+    }
     std::ostringstream o;
     o << "\n<!-- giscus 评论（Cdocs 内置） -->\n"
       << "<section class=\"giscus-wrap\" data-plugin=\"giscus\">\n"
@@ -377,7 +387,8 @@ static std::string render_comments(const SiteConfig& cfg, const std::string& cur
       << "    data-reactions-enabled=\"1\"\n"
       << "    data-emit-metadata=\"0\"\n"
       << "    data-input-position=\"bottom\"\n"
-      << "    data-theme=\"" << esc_attr(cfg.giscus.theme) << "\"\n"
+      << "    data-theme=\"" << esc_attr(theme) << "\""
+      << (customTheme ? " data-custom-theme=\"1\"\n" : "\n")
       << "    data-lang=\"" << lang << "\"\n"
       << "    crossorigin=\"anonymous\" async>\n"
       << "  </script>\n"
