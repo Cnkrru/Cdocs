@@ -4,7 +4,7 @@ Cdocs 是一个**命令行驱动的静态文档站生成器**，不对外暴露 
 
 | 层面 | 位置 | 说明 |
 | --- | --- | --- |
-| 配置 | `.Cdocs/config/config.json` + `route.json` | 站点元数据、功能开关、导航 |
+| 配置 | `.Cdocs/config/config.json` + `sidebar/`（分文件侧边栏） | 站点元数据、功能开关、导航（老站点 route.json 自动兼容） |
 | 主题 | `.Cdocs/theme/` | 页面骨架（layout.html）+ 前端资源（assets/），换主题 = 换文件夹 |
 | 插件 | `.Cdocs/plugins/<name>/plugin.json` | 外部脚本挂接构建生命周期钩子 |
 
@@ -285,7 +285,8 @@ Docusaurus 风格多版本：**显式配置优先，约定优于配置**。
 
 - key = 版本源目录名（`docs`、`docs-v1`...，自动识别）或 `blog`；value = 相对 `.Cdocs/config/` 的 JSON 路径。
 - 每个版本独立构建时加载自己那份侧边栏；博客页（列表/详情）加载 `blog` 那份。
-- 未配置映射或文件缺失 → 回退全局 `.Cdocs/config/route.json`（旧结构零回归）。
+- `init` 生成的新站点默认带 `sidebar/docs.json` + `sidebar/blog.json` 与映射；`Cdocs add` 自动登记到 `sidebar/docs.json`。
+- 未配置映射或文件缺失 → 回退全局 `.Cdocs/config/route.json`（老站点零回归）。
 
 JSON 文件格式（`sidebar` 数组，最多 6 层嵌套）：
 

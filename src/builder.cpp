@@ -555,7 +555,7 @@ struct BuildContext {
 
 // ---------------- 构建阶段（run_build 的拆分，file-local） ----------------
 
-// 1) 载入站点配置：config.json + route.json 导航 + 插件渲染开关
+// 1) 载入站点配置：config.json + 侧边栏（sidebar/ 分文件 + site.sidebar 映射，未配置回退 route.json）
 static void load_site_config(BuildContext& b) {
     SiteConfig& cfg = b.cfg;
     I18nCfg& i18n = b.i18n;
@@ -1666,7 +1666,7 @@ static void print_summary(BuildContext& b) {
             std::cout << "  - " << color::cyan(p.file + ".html") << color::muted("  (")
                       << i18n_replace(p.title, defDict) << color::muted(")\n");
         }
-        std::cout << color::muted("配置: config.json + route.json | 插件: ");
+        std::cout << color::muted("配置: config.json + sidebar/ | 插件: ");
         for (const auto& p : cfg.plugins) std::cout << color::blue(p) << " ";
         if (cfg.plugins.empty()) std::cout << color::muted("(默认全开)");
         std::cout << (cfg.themeVars.empty() ? std::string("") : color::muted(" | 已注入主题变量")) << "\n";
@@ -2157,23 +2157,8 @@ int cmd_init(fs::path dir, bool copyExe) {
           << "}\n";
     }
 
-    // 2) route.json（入门分组 + intro/guide 两篇示例；作为全局侧边栏兜底）
-    {
-        std::ofstream o(dir / ".Cdocs/config/route.json");
-        o << "{\n"
-          << "  \"sidebar\": [\n"
-          << "    {\n"
-          << "      \"title\": \"{{navGettingStarted}}\",\n"
-          << "      \"items\": [\n"
-          << "        { \"title\": \"{{navIntro}}\", \"file\": \"intro\" },\n"
-          << "        { \"title\": \"{{navGuide}}\", \"file\": \"guide\" }\n"
-          << "      ]\n"
-          << "    }\n"
-          << "  ]\n"
-          << "}\n";
-    }
-
-    // 2.5) sidebar/ 分文件侧边栏（新结构：每个版本 / 博客区一份独立 JSON，名字可自定义）
+    // 2) sidebar/ 分文件侧边栏（新结构：每个版本 / 博客区一份独立 JSON，名字可自定义）
+    //    （不再生成全局 route.json——侧边栏已按版本/区域拆分，config.json 的 site.sidebar 映射接管）
     {
         std::error_code sec;
         fs::create_directories(dir / ".Cdocs/config/sidebar", sec);
@@ -2228,14 +2213,14 @@ int cmd_init(fs::path dir, bool copyExe) {
         "```\n"
         "my-site/\n"
         "├── .Cdocs/\n"
-        "│   ├── config/   config.json + route.json\n"
+        "│   ├── config/   config.json + sidebar/（分文件侧边栏）\n"
         "│   ├── i18n/     zh-CN.json / en.json\n"
         "│   └── theme/    主题（assets 前端资源 + templates/layout.html 页面骨架）\n"
         "├── docs/         *.md 源文档\n"
         "└── dist/         生成的静态站点\n"
         "```\n\n"
         "## 新建一篇文档\n\n"
-        "运行 `Cdocs add my-page`，会在 `docs/my-page.md` 生成文件，并自动加入 `route.json` 导航。\n\n"
+        "运行 `Cdocs add my-page`，会在 `docs/my-page.md` 生成文件，并自动加入当前版本侧边栏。\n\n"
         "## 代码高亮\n\n"
         "```cpp\n"
         "#include <iostream>\n"
@@ -2253,7 +2238,7 @@ int cmd_init(fs::path dir, bool copyExe) {
         "```\n"
         "my-site/\n"
         "├── .Cdocs/\n"
-        "│   ├── config/   config.json + route.json\n"
+        "│   ├── config/   config.json + sidebar/ (per-area sidebars)\n"
         "│   ├── i18n/     zh-CN.json / en.json\n"
         "│   └── theme/    theme (assets + templates/layout.html)\n"
         "├── docs/         *.md source\n"
@@ -2319,7 +2304,7 @@ int cmd_init(fs::path dir, bool copyExe) {
     return 0;
 }
 
-// add：新建一篇文档（对标 hugo new content/...），并自动登记到 route.json 导航
+// add：新建一篇文档（对标 hugo new content/...），并自动登记到当前版本的侧边栏（sidebar/docs.json）
 // 当前日期 YYYY-MM-DD（archetype 模板 {{date}} 占位用）
 static std::string current_date() {
     std::time_t now = std::time(nullptr);
@@ -2370,11 +2355,14 @@ int cmd_add(const std::string& name) {
     std::ofstream(doc)   << body;
     std::ofstream(docEn) << "# " << title << "\n\nStart writing…\n";
 
-    // 登记到 route.json（追加到第一个分组，无分组则新建）
+    // 登记到当前版本文档侧边栏 sidebar/docs.json（追加到第一个分组，无分组则新建）
+    // 旧站点的全局 route.json 兼容：仅当 sidebar/docs.json 不存在时回退登记到 route.json
+    fs::path sp = ".Cdocs/config/sidebar/docs.json";
     fs::path rp = ".Cdocs/config/route.json";
+    fs::path target = fs::exists(sp) ? sp : rp;
     json rj = json::object();
-    if (fs::exists(rp)) {
-        try { rj = json::parse(read_file(rp)); } catch (...) { rj = json::object(); }
+    if (fs::exists(target)) {
+        try { rj = json::parse(read_file(target)); } catch (...) { rj = json::object(); }
     }
     if (!rj.contains("sidebar") || !rj["sidebar"].is_array()) rj["sidebar"] = json::array();
     auto& sb = rj["sidebar"];
@@ -2390,10 +2378,11 @@ int cmd_add(const std::string& name) {
         grp["items"].push_back(item);
         sb.push_back(grp);
     }
-    std::ofstream(rp) << rj.dump(2, ' ', false, json::error_handler_t::replace) << "\n";
+    std::ofstream(target) << rj.dump(2, ' ', false, json::error_handler_t::replace) << "\n";
 
     std::cout << color::green("已创建文档: ") << doc << color::muted(" (+ ") << docEn << ")\n"
-              << color::green("已加入导航: ") << title << color::muted("（route.json）\n")
+              << color::green("已加入导航: ") << title
+              << color::muted("（" + target.string() + "）\n")
               << color::muted("构建预览: ") << color::cyan("Cdocs serve --watch") << "\n";
     return 0;
 }
