@@ -6,19 +6,19 @@ This page verifies the PhotoSwipe 5 lightbox feature: click any content image to
 
 Click the image below → fullscreen view; click the backdrop or press Esc to close.
 
-![Single test image 800x500](assets/lightbox/test-1.png)
+![Single test image 800x500](../assets/lightbox/test-1.png)
 
 ## Gallery Navigation (same-page images group together)
 
 All images on the same page automatically form a gallery: once opened, use ←/→ keys, swipe, or click the arrows on desktop to switch, with the current index and alt caption shown at the bottom.
 
-![Second test image 640x800](assets/lightbox/test-2.png)
+![Second test image 640x800](../assets/lightbox/test-2.png)
 
-![Third test image 1200x675](assets/lightbox/test-3.png)
+![Third test image 1200x675](../assets/lightbox/test-3.png)
 
-![Fourth test image 500x500](assets/lightbox/test-4.png)
+![Fourth test image 500x500](../assets/lightbox/test-4.png)
 
-![Fifth test image 900x600](assets/lightbox/test-5.png)
+![Fifth test image 900x600](../assets/lightbox/test-5.png)
 
 ## Zoom Test
 
@@ -28,7 +28,7 @@ Double-click (or pinch / mouse-wheel) to zoom in for details; drag to pan when z
 
 Images wrapped in a link keep their normal link behavior — clicking navigates, no lightbox:
 
-[![Linked image](assets/lightbox/test-5.png)](https://example.com/)
+[![Linked image](../assets/lightbox/test-5.png)](https://example.com/)
 
 ## Checklist
 

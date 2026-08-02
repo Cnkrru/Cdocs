@@ -80,14 +80,14 @@ def greet(name: str) -> str:
 
 ## 链接
 
-- [内部页面：命令行参考](commands.html)
+- [内部页面：命令行参考](../generator/commands.html)
 - [外部链接：Hugo](https://gohugo.io/)
 - [锚点跳转](#标题层级)
 - 自动链接：<https://www.rust-lang.org/>
 
 ## 图片
 
-![Cdocs 图标](assets/pwa/icon.svg)
+![Cdocs 图标](../assets/pwa/icon.svg)
 
 ## Admonition（提示框）
 

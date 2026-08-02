@@ -29,23 +29,23 @@
     "home": {
       "cards": [
         {
-          "file": "intro",
+          "file": "getting-started/intro",
           "desc": "Cdocs 是什么、为什么、怎么用"
         },
         {
-          "file": "guide",
+          "file": "getting-started/guide",
           "desc": "安装到 PATH、命令行用法、i18n/版本化/评论等机制"
         },
         {
-          "file": "commands",
+          "file": "generator/commands",
           "desc": "全局旗标、子命令、退出码一览"
         },
         {
-          "file": "architecture",
+          "file": "generator/architecture",
           "desc": "模块化生成器 + run_build 纯编排 + 前端增量式"
         },
         {
-          "file": "features",
+          "file": "generator/features",
           "desc": "零依赖产物、SEO/RSS/PWA、插件系统等能力清单"
         }
       ]
@@ -68,7 +68,7 @@
       },
       {
         "title": "{{navDocs}}",
-        "file": "intro"
+        "file": "getting-started/intro"
       },
       {
         "title": "{{navBlog}}",

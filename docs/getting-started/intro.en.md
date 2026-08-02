@@ -44,5 +44,5 @@ Cdocs new my-docs
 ## Where to go next
 
 - For command usage and authoring syntax, read the [Guide](guide.html).
-- For CLI flags and config-file fields, read the [API Reference](api.html).
-- For the full "Markdown to live site" pipeline, read the [Render Pipeline](pipeline.html).
+- For CLI flags and config-file fields, read the [API Reference](../reference/api.html).
+- For the full "Markdown to live site" pipeline, read the [Render Pipeline](../generator/pipeline.html).

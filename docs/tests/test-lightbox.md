@@ -6,19 +6,19 @@
 
 点击下方图片 → 全屏放大；再点击遮罩或按 Esc 关闭。
 
-![单张测试图 800x500](assets/lightbox/test-1.png)
+![单张测试图 800x500](../assets/lightbox/test-1.png)
 
 ## 图集导航（同页多图成组）
 
 同一页的多张图片自动组成图集：打开任意一张后，可用 ←/→ 键、左右滑动或在桌面端点击箭头切换，底部显示当前索引与 alt 说明。
 
-![第二张测试图 640x800](assets/lightbox/test-2.png)
+![第二张测试图 640x800](../assets/lightbox/test-2.png)
 
-![第三张测试图 1200x675](assets/lightbox/test-3.png)
+![第三张测试图 1200x675](../assets/lightbox/test-3.png)
 
-![第四张测试图 500x500](assets/lightbox/test-4.png)
+![第四张测试图 500x500](../assets/lightbox/test-4.png)
 
-![第五张测试图 900x600](assets/lightbox/test-5.png)
+![第五张测试图 900x600](../assets/lightbox/test-5.png)
 
 ## 缩放测试
 
@@ -28,7 +28,7 @@
 
 被链接包裹的图片保持原有链接行为，点击直接跳转、不打开灯箱：
 
-[![链接内图片](assets/lightbox/test-5.png)](https://example.com/)
+[![链接内图片](../assets/lightbox/test-5.png)](https://example.com/)
 
 ## 验证要点
 

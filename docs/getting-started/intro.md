@@ -44,8 +44,8 @@ Cdocs new my-docs
 ## 接下来
 
 - 想了解命令用法与写作语法，读 [使用指南](guide.html)。
-- 想看命令行与配置文件字段，读 [接口说明](api.html)。
-- 想了解「从 Markdown 到上线」的完整链路，读 [渲染管线](pipeline.html)。
+- 想看命令行与配置文件字段，读 [接口说明](../reference/api.html)。
+- 想了解「从 Markdown 到上线」的完整链路，读 [渲染管线](../generator/pipeline.html)。
 
 
 测试热重载内容
