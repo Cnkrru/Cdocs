@@ -49,7 +49,10 @@ Cdocs deploy
 Cdocs deploy --remote https://github.com/me/docs.git --branch gh-pages -m "docs: v2.0"
 Cdocs deploy --force
 Cdocs deploy --vercel
+Cdocs deploy --setup
 ```
+
+`--setup` generates platform deployment files via plugins (see `plugins.en.md` → Deployment plugins): scans `.Cdocs/plugins/` for the `setup` hook, each plugin writes `.github/workflows/*.yml` / `vercel.json` to the project root (idempotent). Commit them and pushes auto-deploy via GitHub Actions / Vercel.
 
 Global flags (before the subcommand): `-c/--config`, `-s/--source`, `-d/--dest`, `-q/--quiet`, `-V/--verbose`. Exit codes: `0` ok, `1` runtime error, `2` usage error.
 

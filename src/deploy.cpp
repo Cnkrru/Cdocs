@@ -13,6 +13,7 @@
 
 #include "deploy.hpp"
 #include "builder.hpp"
+#include "plugin.hpp"     // cmd_deploy_setup：扫描并执行部署插件（setup 钩子）
 
 #ifdef _WIN32
 #include <windows.h>
@@ -343,5 +344,33 @@ int cmd_deploy(fs::path source, fs::path dest,
     }
     std::cout << color::green("部署完成 ✓ ") << color::muted("站点已发布到 ")
               << color::cyan(branch) << color::muted(" 分支\n");
+    return 0;
+}
+
+// ---------------- 部署配置生成（插件驱动） ----------------
+// 把「自动化部署」做成插件：每个平台一个插件（.Cdocs/plugins/<name>/），声明 `setup` 钩子；
+// 本命令扫描并执行所有 setup 钩子，插件脚本以 source（项目根）为上下文生成
+// .github/workflows/*.yml / vercel.json 等平台配置文件。引擎不感知任何平台细节。
+int cmd_deploy_setup(fs::path source) {
+    // 部署配置文件生成到项目根（source 的父目录：默认 source=docs → 项目根），
+    // 而非源文档目录本身（.github/、vercel.json 应位于仓库根）。
+    std::error_code ec;
+    fs::path root = fs::absolute(source);
+    if (!fs::exists(root / ".Cdocs", ec)) root = root.parent_path();   // docs → 项目根
+    plugins_scan_all();                       // 扫描 .Cdocs/plugins/*/plugin.json
+    if (!plugins_any()) {
+        std::cout << color::yellow("  无插件注册（.Cdocs/plugins/ 为空）。\n")
+                  << color::muted("  部署插件参考：\n")
+                  << color::muted("    .Cdocs/plugins/github-pages/    GitHub Pages 自动部署\n")
+                  << color::muted("    .Cdocs/plugins/vercel/          Vercel 自动部署\n");
+        return 0;
+    }
+    json ctx = {
+        {"source", root.string()},             // 项目根（插件写文件的基准）
+        {"engine", fs::absolute(g_engine).string()}
+    };
+    std::cout << color::cyan("\n[deploy setup] 生成自动化部署配置（插件驱动）\n");
+    run_plugin_hooks("setup", ctx);
+    std::cout << color::green("\n完成。生成的部署文件请提交进 git（push 后自动部署生效）。\n");
     return 0;
 }

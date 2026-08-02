@@ -83,11 +83,37 @@ bool skip_target(const std::string& t) {
     return false;
 }
 
+// URL 百分号解码（%XX → 字节）。自动导航对中文文件名生成 %E5%9F%BA... 编码链接，
+// 核对前须还原为中文路径，否则 fs::exists 找不到而误报死链。
+static std::string url_decode(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    auto hexv = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            int h = hexv(s[i + 1]), l = hexv(s[i + 2]);
+            if (h >= 0 && l >= 0) {
+                out.push_back((char)((h << 4) | l));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(s[i]);
+    }
+    return out;
+}
+
 // 相对 locOut 解析：baseDir 是页面所在子目录（相对 locOut，如 "" 或 "blog"），
 // target 是页面内链接路径。返回相对 locOut 的规范化路径（存在性由调用方核对）。
 fs::path resolve_target(const fs::path& baseDir, const std::string& raw) {
     std::string t = strip_query_frag(raw);
     if (t.empty()) return {};
+    t = url_decode(t);                              // 中文文件名链接还原（%E5%9F%BA... → 中文）
     fs::path base = baseDir.empty() ? fs::path(".") : baseDir;
     fs::path p = t;
     if (p.is_absolute()) {                              // 根相对：从 locOut 起

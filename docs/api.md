@@ -28,7 +28,7 @@ Cdocs 是一个**命令行驱动的静态文档站生成器**，不对外暴露 
 ### deploy 详解
 
 ```
-Cdocs deploy [--remote <url>] [--branch <b>] [-m <msg>] [--force] [--vercel]
+Cdocs deploy [--remote <url>] [--branch <b>] [-m <msg>] [--force] [--vercel] [--setup]
 ```
 
 **GitHub Pages（默认）**——内置 git 调用，零外部脚本依赖：
@@ -58,7 +58,17 @@ Cdocs deploy --force
 
 # 发布到 Vercel 生产环境（需已安装并登录 vercel CLI）
 Cdocs deploy --vercel
+
+# 生成自动化部署配置（插件驱动，见 docs/plugins.md「部署插件」）
+Cdocs deploy --setup
 ```
+
+**自动化部署配置（`--setup`，插件驱动）**——不构建、不发布，只生成平台部署文件：
+
+- 扫描 `.Cdocs/plugins/` 下声明 `setup` 钩子的插件，以**项目根**为上下文执行，插件负责生成 `.github/workflows/*.yml` 与 `vercel.json`。
+- 内置两个部署插件：`github-pages`（生成 Pages workflow）、`vercel`（生成 vercel.json + 预编译 Linux 二进制的 workflow）。
+- 幂等：文件已存在且内容一致则跳过。生成的部署文件**提交进 git** 后，push 即自动部署（GitHub Actions / Vercel 平台机制，不依赖本地）。
+- 换平台 = 增删 `.Cdocs/plugins/` 下的部署插件目录，引擎不感知任何平台细节。
 
 ### 全局旗标（放在子命令前）
 

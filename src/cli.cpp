@@ -45,7 +45,8 @@ void print_help() {
       << "  " << yellow("deploy --branch <b>") << "   目标分支（默认 gh-pages）\n"
       << "  " << yellow("deploy -m <msg>")    << "      提交信息（默认 \"Deploy Cdocs site\"）\n"
       << "  " << yellow("deploy --force")     << "      构建前清空输出目录\n"
-      << "  " << yellow("deploy --vercel")    << "      发布到 Vercel（构建后调 vercel CLI，需先 vercel login）\n\n"
+      << "  " << yellow("deploy --vercel")    << "      发布到 Vercel（构建后调 vercel CLI，需先 vercel login）\n"
+      << "  " << yellow("deploy --setup")     << "      生成自动化部署配置（插件驱动：.github/workflows + vercel.json）\n\n"
       << bold("示例:") << "\n"
       << "  " << cyan("Cdocs init mysite") << muted("            # 新建站点（自动构建）") << "\n"
       << "  " << cyan("Cdocs new my-page") << muted("           # 新建文档并登记导航") << "\n"
@@ -83,12 +84,16 @@ void print_subcommand_help(const std::string& cmd) {
     } else if (cmd == "deploy") {
         std::cout << bold(green("Cdocs deploy")) << " [" << yellow("--remote <url>") << "] ["
                   << yellow("--branch <b>") << "] [" << yellow("-m <msg>") << "] ["
-                  << yellow("--force") << "] [" << yellow("--vercel") << "]\n"
-                  << muted("  构建站点并发布。两种目标：\n")
+                  << yellow("--force") << "] [" << yellow("--vercel") << "] ["
+                  << yellow("--setup") << "]\n"
+                  << muted("  构建站点并发布。三种模式：\n")
                   << muted("    （默认）推送到远端分支（gh-pages），对标 mkdocs gh-deploy；\n")
                   << muted("      远端解析：--remote > config site.deploy.remote > 已有 origin > site.url 推断。\n")
                   << muted("    --vercel  发布到 Vercel 生产环境（构建后调 vercel CLI：vercel --prod --yes dist）。\n")
                   << muted("      依赖 Node + vercel CLI：npm i -g vercel && vercel login（首次）。\n")
+                  << muted("    --setup   生成自动化部署配置文件（插件驱动，不构建）：\n")
+                  << muted("      扫描 .Cdocs/plugins/ 下声明 setup 钩子的部署插件（github-pages / vercel），\n")
+                  << muted("      生成 .github/workflows/*.yml 与 vercel.json 到项目根，提交 git 后 push 即自动部署。\n")
                   << muted("  --force  构建前清空输出目录（默认仅首次部署清空，保留部署历史）。\n");
     } else if (cmd == "new" || cmd == "add" || cmd == "page") {
         std::cout << bold(green("Cdocs new")) << " <页面名>\n"
@@ -219,6 +224,7 @@ int run_command(std::vector<std::string> args) {
             else if ((a == "-m" || a == "--message") && i + 1 < args.size()) message = args[++i];
             else if (a == "--force" || a == "-f")                 force   = true;
             else if (a == "--vercel")                             toVercel = true;
+            else if (a == "--setup")                              return cmd_deploy_setup(g_source);
             else if (a == "-h" || a == "--help")                  { print_subcommand_help("deploy"); return 0; }
             else if (a.rfind("-", 0) == 0) {
                 std::cerr << color::error("错误: 未知 deploy 旗标 '") << a << color::error("'\n");

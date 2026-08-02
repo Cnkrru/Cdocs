@@ -1,0 +1,11 @@
+{
+  "name": "github-pages",
+  "description": "GitHub Pages 自动部署。setup 钩子生成 .github/workflows/deploy.yml：push 到 main 后云端编译生成器并发布到 Pages。",
+  "version": "1.0.0",
+  "hooks": {
+    "setup": {
+      "cmd": "python scripts/setup.py",
+      "timeout": 30
+    }
+  }
+}

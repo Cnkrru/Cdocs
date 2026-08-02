@@ -1,4 +1,5 @@
 # Cdocs 自动部署：源码 push 后自动构建并发布到 GitHub Pages
+# 由 Cdocs deploy --setup 的 github-pages 插件生成（引擎插件化，改引擎不涉及本文件）
 # 依赖：仓库 Settings → Pages → Build and deployment → Source 选 "GitHub Actions"
 name: Deploy
 

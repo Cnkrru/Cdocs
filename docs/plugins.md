@@ -38,6 +38,9 @@
 | `on_page_collected` | 页面收集完成后 | `count`、`pages[]`（file/title/draft/tags） |
 | `on_page_rendered` | **每页**写盘后 | `file` / `locale` / `path`（绝对路径） |
 | `on_done` | 全部产物生成后 | `engine` / `source` / `dest` |
+| `setup` | `Cdocs deploy --setup` | `source`（**项目根**，非源目录）/ `engine` |
+
+`setup` 钩子是**非构建期**钩子，仅由 `Cdocs deploy --setup` 触发——用于生成平台部署配置（`.github/workflows/*.yml`、`vercel.json` 等），插件以 `ctx.source`（项目根）为基准写文件，幂等（内容一致则跳过）。引擎内置两个部署插件：`github-pages`、`vercel`。
 
 所有路径字段均为**绝对路径**（构建器已把插件 cwd 切到插件目录，相对路径会解析错误）。
 
@@ -98,4 +101,8 @@ else:
 
 以下能力**引擎内置**（约定优于配置，无需插件）：版本化文档（`docs-*` 快照自动识别）、RSS/PWA/sitemap/SEO、图片与代码压缩、正文末尾通用注入（`on_config` 返回 `inject` 片段，任意组件/评论系统可用）。
 
-**评论系统已插件化**（示例：`.Cdocs/plugins/giscus/`）：giscus 插件在 `on_config` 钩子读取 `config.json` 的 `center.comments`，返回 `{ inject: { 语言: HTML } }`，引擎按语言注入每个页面正文末尾。想换评论系统（utterances / Valine / Gitalk 等）只需新建插件并在 `on_config` 输出 `inject`，引擎无需改动。插件适合做**站点特有**的收尾工作：评论/注入组件、部署推送（gh-pages）、自定义统计、告警通知、内容校验等。
+**评论系统已插件化**（示例：`.Cdocs/plugins/giscus/`）：giscus 插件在 `on_config` 钩子读取 `config.json` 的 `center.comments`，返回 `{ inject: { 语言: HTML } }`，引擎按语言注入每个页面正文末尾。想换评论系统（utterances / Valine / Gitalk 等）只需新建插件并在 `on_config` 输出 `inject`，引擎无需改动。
+
+**部署自动化已插件化**（示例：`.Cdocs/plugins/github-pages/`、`.Cdocs/plugins/vercel/`）：运行 `Cdocs deploy --setup`，引擎扫描声明 `setup` 钩子的插件，插件在项目根生成 `.github/workflows/*.yml` 与 `vercel.json`。这些文件提交进 git 后，push 即由 GitHub Actions / Vercel 平台自动部署（云端机制，不依赖本地编译）。换/加部署平台 = 增删一个部署插件目录，引擎不感知平台细节。
+
+插件适合做**站点特有**的收尾工作：评论/注入组件、部署配置、自定义统计、告警通知、内容校验等。

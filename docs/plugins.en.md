@@ -38,6 +38,9 @@ The builder broadcasts 4 hooks. Each receives a context JSON (`ctx.json`):
 | `on_page_collected` | after pages collected | `count`, `pages[]` (file/title/draft/tags) |
 | `on_page_rendered` | after **each page** written | `file` / `locale` / `path` (absolute) |
 | `on_done` | after all output generated | `engine` / `source` / `dest` |
+| `setup` | `Cdocs deploy --setup` | `source` (**project root**, not the docs dir) / `engine` |
+
+`setup` is a **non-build** hook triggered only by `Cdocs deploy --setup` — used to generate platform deployment files (`.github/workflows/*.yml`, `vercel.json`…). Plugins write to `ctx.source` (project root), idempotent (skips if identical). Built-in deploy plugins: `github-pages`, `vercel`.
 
 All path fields are **absolute** (the builder chdirs into the plugin dir, so relative paths would resolve wrongly).
 

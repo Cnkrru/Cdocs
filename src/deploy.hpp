@@ -17,4 +17,9 @@ int cmd_deploy(fs::path source, fs::path dest,
                std::string remote, std::string branch,
                std::string message, bool force, bool toVercel = false);
 
+// 生成自动化部署配置（插件驱动）：扫描 .Cdocs/plugins/ 下声明 `setup` 钩子的插件，
+// 以项目根为上下文执行，插件负责生成 .github/workflows/*.yml / vercel.json 等平台配置文件。
+// 幂等：文件内容一致则跳过；`Cdocs deploy --setup` 触发。返回 0=成功。
+int cmd_deploy_setup(fs::path source);
+
 #endif  // CDOCS_DEPLOY_HPP
