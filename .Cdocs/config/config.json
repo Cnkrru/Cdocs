@@ -88,6 +88,15 @@
     "backToTop": {
       "threshold": 300,
       "label": "顶部"
+    },
+    "comments": {
+      "provider": "giscus",
+      "repo": "Cnkrru/Cdocs",
+      "repoId": "R_kgDOTrIf6w",
+      "category": "Announcements",
+      "categoryId": "DIC_kwDOTrIf684DChsc",
+      "mapping": "pathname",
+      "theme": "preferred_color_scheme"
     }
   },
   "footer": {
