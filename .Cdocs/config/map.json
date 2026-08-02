@@ -1,10 +1,10 @@
 {
   "maps": {
-    "home": "map/home.html",
-    "doc": "map/doc.html",
-    "blog": "map/blog.html",
-    "blog-post": "map/blog-post.html",
-    "tags": "map/tags.html",
-    "404": "map/404.html"
+    "home": "map/home.json",
+    "doc": "map/doc.json",
+    "blog": "map/blog.json",
+    "blog-post": "map/blog-post.json",
+    "tags": "map/tags.json",
+    "404": "map/404.json"
   }
 }

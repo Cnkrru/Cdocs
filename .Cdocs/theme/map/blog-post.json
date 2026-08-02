@@ -1,0 +1,230 @@
+{
+  "sections": [
+    {
+      "html": "<!DOCTYPE html>\n<html lang=\"{{lang}}\" data-theme=\"{{theme}}\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <script>try{var t=localStorage.getItem('theme')||document.documentElement.getAttribute('data-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>\n  <title>{{title}}</title>\n"
+    },
+    {
+      "component": "MetaHead",
+      "sections": [
+        {
+          "component": "MetaDescription",
+          "if": "meta_desc"
+        },
+        {
+          "component": "MetaHighlight",
+          "if": "show_highlight"
+        },
+        {
+          "component": "MetaVars",
+          "if": "theme_vars"
+        },
+        {
+          "component": "MetaCss",
+          "if": "custom_css_href"
+        },
+        {
+          "html": "{{extra_head}}"
+        }
+      ]
+    },
+    {
+      "html": "</head>\n<body{{body_class}}>\n"
+    },
+    {
+      "component": "SkipLink"
+    },
+    {
+      "component": "Header",
+      "sections": [
+        {
+          "component": "HeaderLeft",
+          "sections": [
+            {
+              "component": "MenuToggle",
+              "if": "header.show_menu_toggle"
+            },
+            {
+              "component": "Logo"
+            },
+            {
+              "component": "TopNav",
+              "if": "header.topnav",
+              "sections": [
+                {
+                  "component": "TopNavLink",
+                  "each": "header.topnav"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "component": "HeaderCenter",
+          "sections": [
+            {
+              "component": "SearchBox",
+              "if": "header.show_search"
+            }
+          ]
+        },
+        {
+          "component": "HeaderRight",
+          "sections": [
+            {
+              "component": "HeaderNav",
+              "if": "header.header_nav",
+              "sections": [
+                {
+                  "component": "HeaderNavLink",
+                  "each": "header.header_nav"
+                }
+              ]
+            },
+            {
+              "component": "LangSwitch",
+              "if": "header.lang_switch.html"
+            },
+            {
+              "component": "VersionSelect",
+              "if": "header.versions",
+              "sections": [
+                {
+                  "component": "VersionCurrent",
+                  "if": "header.versions.current"
+                },
+                {
+                  "component": "VersionLink",
+                  "each": "header.versions.links"
+                }
+              ]
+            },
+            {
+              "component": "ThemeToggle",
+              "if": "header.show_theme_toggle"
+            },
+            {
+              "component": "GhLink",
+              "if": "header.github"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "html": "  <div class=\"layout\">\n"
+    },
+    {
+      "component": "LeftNav",
+      "if": "nav_groups",
+      "sections": [
+        {
+          "component": "NavGroup",
+          "each": "nav_groups",
+          "sections": [
+            {
+              "component": "NavItem",
+              "each": "items"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "html": "    <main class=\"content\" id=\"main\">\n"
+    },
+    {
+      "component": "Breadcrumb",
+      "if": "breadcrumb",
+      "sections": [
+        {
+          "component": "CrumbLink",
+          "each": "breadcrumb.links"
+        },
+        {
+          "component": "CrumbText",
+          "each": "breadcrumb.texts"
+        },
+        {
+          "component": "CrumbCurrent",
+          "if": "breadcrumb.current"
+        }
+      ]
+    },
+    {
+      "html": "{{body}}\n"
+    },
+    {
+      "component": "Pager",
+      "if": "pager.show",
+      "sections": [
+        {
+          "component": "PagerPrev",
+          "if": "pager.prev.show"
+        },
+        {
+          "component": "PagerPrevDisabled",
+          "if": "pager.prev.hidden"
+        },
+        {
+          "component": "PagerNext",
+          "if": "pager.next.show"
+        },
+        {
+          "component": "PagerNextDisabled",
+          "if": "pager.next.hidden"
+        }
+      ]
+    },
+    {
+      "html": "    </main>\n  </div>\n"
+    },
+    {
+      "component": "Footer",
+      "if": "footer.show",
+      "sections": [
+        {
+          "component": "FooterText",
+          "if": "footer.text"
+        },
+        {
+          "component": "FooterLinks",
+          "if": "footer.links",
+          "sections": [
+            {
+              "component": "FooterLink",
+              "each": "footer.links"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "component": "BackToTop",
+      "if": "backtop.show"
+    },
+    {
+      "component": "Scripts",
+      "sections": [
+        {
+          "component": "ScriptHighlight",
+          "if": "scripts.highlight"
+        },
+        {
+          "component": "ScriptSearch",
+          "if": "scripts.search"
+        },
+        {
+          "component": "ScriptI18n",
+          "if": "scripts.i18n_json"
+        },
+        {
+          "component": "ScriptFeedback",
+          "if": "scripts.feedback"
+        }
+      ]
+    },
+    {
+      "html": "</body>\n</html>\n"
+    }
+  ]
+}

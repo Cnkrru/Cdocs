@@ -541,19 +541,21 @@ static const json* json_get_path(const json& data, const std::string& path) {
     return nullptr;
 }
 
-// ============ 地图驱动引擎（Map-Driven，v2 架构） ============
-// 语法（纯 HTML 风格，无控制流语法）：
-//   <PascalCase/>                 组件挂载（自闭合）
-//   <PascalCase>...</PascalCase>  容器组件：子内容渲染后拼进 {{slot}}
-//   if="path"                     属性：数据路径真值才渲染该组件
-//   each="path"                   属性：数组循环渲染（每项合并进数据作用域）
-//   {{field}} / {{a.b.c}}         数据孔：路径取值替换（含 {{slot}}）；缺失原样保留（L2 兜底）
-// 数据作用域：全局页面数据 + each 当前项字段覆盖。组件内引用全局数据用嵌套路径（{{edit.href}}）。
+// ============ 地图驱动引擎（Map-Driven，v3：纯 JSON 约定，无任何自定义语法） ============
+// 地图 = theme/map/<type>.json（JSON sections 数组，每项一种约定）：
+//   { "html": "静态 HTML 片段" }                → 原样输出（可含数据孔 {{lang}} 等）
+//   { "component": "Name" }                    → 渲染组件 components/**/<Name>.html
+//   { "component": "Name", "if": "path" }      → 数据路径真值才渲染
+//   { "component": "Name", "each": "path" }    → 数组循环渲染（每项合并进数据作用域）
+//   { "component": "Name", "sections": [...] } → 子序列渲染结果填进组件 {{slot}}
+// 组件 = 纯 HTML 片段 + 数据孔 {{field}} / {{slot}}——没有 {{ if }}/{{ each }} 控制流，
+// 没有 <组件/> 标签，没有属性语法。条件/循环/嵌套全部由 JSON 地图字段表达。
+// 数据作用域：全局页面数据 + each 当前项字段覆盖。
 
-static std::string expand_map(const std::string& html, const json& data,
-                              int depth, std::vector<std::string>& stack);
+static std::string compose_sections(const json& sections, const json& data,
+                                    int depth, std::vector<std::string>& stack);
 
-// 数据孔替换（纯文本）：{{a.b.c}} → data 路径取值；缺失原样保留
+// 数据孔替换（纯文本）：{{a.b.c}} → data 路径取值；缺失原样保留（L2 兜底）
 static std::string fill_data_holes(const std::string& html, const json& data) {
     std::string out;
     out.reserve(html.size() + 128);
@@ -575,10 +577,10 @@ static std::string fill_data_holes(const std::string& html, const json& data) {
     return out;
 }
 
-// 渲染单个组件实例：读文件 → 递归展开内部组件 → slot 注入 → 数据孔替换
+// 渲染单个组件实例：读 <Name>.html（纯 HTML 片段）→ 子 sections → {{slot}} → 数据孔替换
 static std::string render_map_component(const std::string& name, const json& data,
                                         int depth, std::vector<std::string>& stack,
-                                        const std::string& slotHtml) {
+                                        const json* childSections) {
     if (depth > 32) {
         if (g_comp_warned.insert("depth:" + name).second)
             std::cerr << color::warn("警告: ") << "组件嵌套过深（>32 层）: " << name << "\n";
@@ -593,111 +595,59 @@ static std::string render_map_component(const std::string& name, const json& dat
     if (body.empty()) {
         if (g_comp_warned.insert("missing:" + name).second)
             std::cerr << color::warn("警告: ") << "组件文件不存在: components/" << name
-                      << ".html（标签原样保留）\n";
-        return "<" + name + "/>";
+                      << ".html（该组件已跳过）\n";
+        return {};
     }
     stack.push_back(name);
-    std::string out = expand_map(body, data, depth + 1, stack);
-    stack.pop_back();
-    // 始终注入 slot 键（空也注入：无子组件的组件里 {{slot}} → 空串，不留残孔）
+    // 子 sections → slot 内容（each 当前项上下文已由调用方合并进 data）
     json ctx = data;
-    ctx["slot"] = slotHtml;
-    out = fill_data_holes(out, ctx);
-    return out;
+    if (childSections) ctx["slot"] = compose_sections(*childSections, data, depth + 1, stack);
+    else               ctx["slot"] = std::string();
+    stack.pop_back();
+    // 组件内是纯 HTML + 数据孔（{{slot}} / {{field}}），只做数据孔替换
+    return fill_data_holes(body, ctx);
 }
 
-// 递归展开地图/组件内容：扫组件标签（属性 if/each + 嵌套 + slot），普通 HTML 原样保留
-static std::string expand_map(const std::string& html, const json& data,
-                              int depth, std::vector<std::string>& stack) {
+// 遍历 JSON sections 数组（地图核心：component/if/each/sections/html 五种约定）
+static std::string compose_sections(const json& sections, const json& data,
+                                    int depth, std::vector<std::string>& stack) {
     std::string out;
-    out.reserve(html.size() + 512);
-    size_t i = 0;
-    while (i < html.size()) {
-        if (html[i] == '<' && i + 1 < html.size() && isupper((unsigned char)html[i + 1])) {
-            size_t gt = html.find('>', i + 1);
-            if (gt != std::string::npos) {
-                std::string tagPart = html.substr(i + 1, gt - i - 1);
-                bool selfClose = !tagPart.empty() && tagPart.back() == '/';
-                std::string tagCore = selfClose ? tagPart.substr(0, tagPart.size() - 1) : tagPart;
-                size_t sp = tagCore.find_first_of(" \t");
-                std::string name = (sp == std::string::npos) ? tagCore : tagCore.substr(0, sp);
-                std::string attrs = (sp == std::string::npos) ? "" : tagCore.substr(sp + 1);
-                bool valid = !name.empty() && isupper((unsigned char)name[0]);
-                for (char c : name)
-                    if (!isalnum((unsigned char)c)) { valid = false; break; }
-                if (valid) {
-                    auto getAttr = [&](const std::string& key) -> std::string {
-                        size_t p = attrs.find(key + "=\"");
-                        if (p == std::string::npos) return {};
-                        size_t v0 = p + key.size() + 2;
-                        size_t v1 = attrs.find('"', v0);
-                        if (v1 == std::string::npos) return {};
-                        return attrs.substr(v0, v1 - v0);
-                    };
-                    std::string ifPath = getAttr("if");
-                    std::string eachPath = getAttr("each");
-                    if (selfClose) {
-                        if (!ifPath.empty()) {
-                            const json* cv = json_get_path(data, ifPath);
-                            if (!cv || !tpl_truthy(*cv)) { i = gt + 1; continue; }
-                        }
-                        if (!eachPath.empty()) {
-                            const json* av = json_get_path(data, eachPath);
-                            if (av && av->is_array()) {
-                                for (const auto& item : *av) {
-                                    json ctx = data;
-                                    if (item.is_object())
-                                        for (auto it = item.begin(); it != item.end(); ++it)
-                                            ctx[it.key()] = it.value();
-                                    out += render_map_component(name, ctx, depth, stack, "");
-                                }
-                            }
-                            i = gt + 1;
-                            continue;
-                        }
-                        out += render_map_component(name, data, depth, stack, "");
-                        i = gt + 1;
-                        continue;
-                    }
-                    // 双标签：找 </Name>，子内容递归展开 → 作为父组件 {{slot}}
-                    std::string closeTag = "</" + name + ">";
-                    size_t close = html.find(closeTag, gt + 1);
-                    if (close != std::string::npos) {
-                        if (!ifPath.empty()) {
-                            const json* cv = json_get_path(data, ifPath);
-                            if (!cv || !tpl_truthy(*cv)) { i = close + closeTag.size(); continue; }
-                        }
-                        std::string inner = html.substr(gt + 1, close - gt - 1);
-                        if (!eachPath.empty()) {
-                            const json* av = json_get_path(data, eachPath);
-                            if (av && av->is_array()) {
-                                for (const auto& item : *av) {
-                                    json ctx = data;
-                                    if (item.is_object())
-                                        for (auto it = item.begin(); it != item.end(); ++it)
-                                            ctx[it.key()] = it.value();
-                                    std::string slot = expand_map(inner, ctx, depth, stack);
-                                    out += render_map_component(name, ctx, depth, stack, slot);
-                                }
-                            }
-                        } else {
-                            std::string slot = expand_map(inner, data, depth, stack);
-                            out += render_map_component(name, data, depth, stack, slot);
-                        }
-                        i = close + closeTag.size();
-                        continue;
-                    }
-                    // 未闭合双标签：fall through 原样
+    if (!sections.is_array()) return out;
+    for (const auto& sec : sections) {
+        if (!sec.is_object()) continue;
+        // 静态 HTML 片段（骨架：<!DOCTYPE>、<div class="layout"> 等；可含数据孔）
+        if (sec.contains("html") && sec["html"].is_string()) {
+            out += sec["html"].get<std::string>();
+            continue;
+        }
+        if (!sec.contains("component") || !sec["component"].is_string()) continue;
+        std::string name = sec["component"].get<std::string>();
+        // if 判定：数据路径真值才渲染
+        if (sec.contains("if") && sec["if"].is_string()) {
+            const json* cv = json_get_path(data, sec["if"].get<std::string>());
+            if (!cv || !tpl_truthy(*cv)) continue;
+        }
+        const json* child = (sec.contains("sections") && sec["sections"].is_array()) ? &sec["sections"] : nullptr;
+        // each 循环：数组每项渲染一次（当前项字段合并进数据作用域）
+        if (sec.contains("each") && sec["each"].is_string()) {
+            const json* av = json_get_path(data, sec["each"].get<std::string>());
+            if (av && av->is_array()) {
+                for (const auto& item : *av) {
+                    json ctx = data;
+                    if (item.is_object())
+                        for (auto it = item.begin(); it != item.end(); ++it)
+                            ctx[it.key()] = it.value();
+                    out += render_map_component(name, ctx, depth, stack, child);
                 }
             }
+            continue;
         }
-        out += html[i];
-        ++i;
+        out += render_map_component(name, data, depth, stack, child);
     }
     return out;
 }
 
-// 地图主入口：读 config/map.json 注册表 → theme/map/<name>.html → 展开组件 → 数据孔替换
+// 地图主入口：读 config/map.json 注册表 → theme/map/<name>.json → 遍历 sections → 数据孔替换
 static std::string compose_page(const std::string& mapName, const json& data) {
     // config/map.json：页面类型 → 地图文件（相对主题根）。地图不硬编码进 C++，全由注册表驱动。
     std::string mapPath;
@@ -710,7 +660,7 @@ static std::string compose_page(const std::string& mapName, const json& data) {
                 mapPath = j["maps"][mapName].get<std::string>();
         } catch (...) {}
     }
-    fs::path mp = mapPath.empty() ? (theme_root() / "map" / (mapName + ".html"))
+    fs::path mp = mapPath.empty() ? (theme_root() / "map" / (mapName + ".json"))
                                   : (theme_root() / mapPath);
     std::error_code ec;
     if (!fs::is_regular_file(mp, ec)) {
@@ -721,8 +671,16 @@ static std::string compose_page(const std::string& mapName, const json& data) {
             + "\">\n<head>\n<meta charset=\"utf-8\">\n<title>{{title}}</title>\n</head>\n<body>\n{{body}}\n</body>\n</html>\n";
         return fill_data_holes(out, data);
     }
+    json map;
+    try { map = json::parse(read_file(mp)); } catch (...) {
+        if (g_comp_warned.insert("map:" + mapName).second)
+            std::cerr << color::warn("警告: ") << "页面地图 JSON 解析失败: " << mp << "\n";
+        return {};
+    }
+    const json& sections = map.contains("sections") ? map["sections"] : map;
     std::vector<std::string> stack;
-    std::string out = expand_map(read_file(mp), data, 0, stack);
+    std::string out = compose_sections(sections, data, 0, stack);
+    // 地图 html 片段里的顶层数据孔（{{lang}}/{{title}}/{{body}}/{{extra_head}} 等）
     out = fill_data_holes(out, data);
     return out;
 }
@@ -3273,16 +3231,16 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
     std::ofstream(dir / ".Cdocs/i18n/zh-CN.json") << kZhCN;
     std::ofstream(dir / ".Cdocs/i18n/en.json")   << kEn;
 
-    // 4) 页面地图注册表（v2：C++ 构建时读此配置了解有哪些站点地图；地图本体在 theme/map/）
+    // 4) 页面地图注册表（v2：C++ 构建时读此配置了解有哪些站点地图；地图本体在 theme/map/，JSON 约定）
     std::ofstream(dir / ".Cdocs/config/map.json")
         << "{\n"
         << "  \"maps\": {\n"
-        << "    \"home\": \"map/home.html\",\n"
-        << "    \"doc\": \"map/doc.html\",\n"
-        << "    \"blog\": \"map/blog.html\",\n"
-        << "    \"blog-post\": \"map/blog-post.html\",\n"
-        << "    \"tags\": \"map/tags.html\",\n"
-        << "    \"404\": \"map/404.html\"\n"
+        << "    \"home\": \"map/home.json\",\n"
+        << "    \"doc\": \"map/doc.json\",\n"
+        << "    \"blog\": \"map/blog.json\",\n"
+        << "    \"blog-post\": \"map/blog-post.json\",\n"
+        << "    \"tags\": \"map/tags.json\",\n"
+        << "    \"404\": \"map/404.json\"\n"
         << "  }\n"
         << "}\n";
 
