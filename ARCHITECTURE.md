@@ -5,7 +5,7 @@
 > 构建产物 **零运行时依赖**（RSS / JSON Feed / PWA / SEO 全部由生成器内建，无 Node 脚本）。
 >
 > 项目借鉴 Hugo 思路：所有「引擎」相关文件（C++ 源码、配置、i18n、前端资源、构建脚本、第三方依赖）
-> 统一收口在隐藏目录 **`.Cdocs/`** 内；用户侧只需维护 `docs/` 源文与 `dist/` 产物。
+> 统一收口在隐藏目录 **`.Cdocs/`** 内；用户侧只需维护 `md/` 源文（docs/ 文档 + blog/ 博客 + static/ 资源）与 `dist/` 产物。
 > `Cdocs.exe` 可复制到系统 PATH，像 `hugo` 一样在任意终端、任意目录直接调用。
 
 ---
@@ -19,7 +19,7 @@ flowchart LR
     C[".Cdocs/config/config.json<br/>站点配置"]
     R[".Cdocs/config/route.json<br/>侧边栏导航"]
     L[".Cdocs/i18n/*.json<br/>i18n 字典"]
-    D["docs/*.md<br/>Markdown 正文"]
+    D["md/docs/*.md<br/>Markdown 正文"]
     A[".Cdocs/assets/**<br/>样式 · 脚本 · 第三方库"]
   end
 
@@ -59,9 +59,11 @@ Cdocs/
 ├── ARCHITECTURE.md                 # 本文档
 ├── README.md / serve.bat           # 说明 / 双击预览启动器
 ├── .Cdocs/                         # ★ 生成器引擎（输入 + 前端 + 工具 + 依赖收口）
-│   ├── theme/                      # ★ 主题（一个主题 = 一个文件夹，见 docs/themes.md）
+│   ├── theme/                      # ★ 主题（一个主题 = 一个文件夹，见 md/docs/reference/themes.md）
 │   │   ├── theme.json              # 主题元数据（name / version / description / author）
-│   │   ├── templates/layout.html   # 页面骨架（{{key}} 占位符注入数据子块）
+│   │   ├── components/             # ★ 组件目录（Vue 式：一个 .html 文件 = 一个组件，见下方说明）
+│   │   │   └── Header.html …       #   <PascalCase/> 挂载；Header / Footer / LeftNav / CardGrid
+│   │   ├── templates/layout.html   # 页面骨架（{{key}} 占位符 + {{ if key }}…{{ end }} 条件块 + <组件/> 挂载）
 │   │   └── assets/                 # 前端资源（整目录递归拷贝进 dist/assets/）
 │   │       ├── css/                # style.css（双主题变量）· custom.css（用户自定义层）
 │   │       ├── js/                 # app.js 引导 + main.js + core/ + features/
@@ -76,7 +78,7 @@ Cdocs/
 │   ├── tools/                      # 构建脚本（无 Node 后处理）
 │   │   ├── build.cmd               # Windows 一键构建（编译生成器 → Cdocs.exe build）
 │   │   └── build.sh                # Linux / macOS 对应脚本
-│   ├── plugins/                    # 外部脚本插件（可选，见 docs/plugins.md）
+│   ├── plugins/                    # 外部脚本插件（可选，见 md/docs/reference/plugins.md）
 │   └── deps/                       # ★ 第三方依赖统一收口
 │       ├── mermaid.min.js / katex.* / auto-render.min.js   # 图 / 公式（运行时）
 │       ├── highlight.min.js / highlight-theme.css          # 语法高亮（运行时）
@@ -86,8 +88,10 @@ Cdocs/
 │       └── vendor/                 # 编译期 C/C++ 头文件（不随站点发布）
 │           ├── md4c/               # Markdown 解析（C 源，用 gcc 编译）
 │           └── nlohmann/json.hpp   # JSON 解析（C++ 头文件）
-├── docs/                           # Markdown 源（中英 2 语言）
-│   └── blog/                       # 博客流（可选；docs/blog/ 存在即自动收集为博客，见 §7）
+├── md/                             # Markdown 源根
+│   ├── docs/                       # 文档正文（中英 2 语言，按主题分子目录）
+│   ├── blog/                       # 博客流（可选；md/blog/ 存在即自动收集为博客，见 §7）
+│   └── static/                     # 内容静态资源（图片等，随构建拷入 dist）
 ├── .build/                         # 编译中间产物（.o 目标文件 + tmp/ 临时目录）· 非源码
 └── dist/                           # ★ 构建产物（部署用，见 §6；默认开启压缩）
 ```
@@ -97,6 +101,8 @@ Cdocs/
 > - **编译期依赖**（`vendor/` 下的 md4c / nlohmann）：只参与 C++ 编译，**不**随站点发布（生成器拷贝 deps 时跳过 `vendor/`）。
 >
 > **主题收口原则**（2026-08-02）：主题 = `.Cdocs/theme/` 整个文件夹（theme.json 元数据 + templates 骨架 + assets 资源），复制文件夹即换主题；构建器优先读 `theme/`，旧版 `assets/`+`templates/` 直放引擎根的站点自动兼容。
+>
+> **组件系统**（2026-08-03，Vue 式）：`components/*.html` = 组件文件，挂载语法 `<PascalCase/>` 或 `<PascalCase></PascalCase>`（首字母大写即组件，与原生小写 HTML 标签无歧义）。构建时递归展开组件树（循环引用检测 + 深度上限 32），组件内可用 `{{key}}` 占位符与 `{{ if }}` 条件块，数据由构建器喂（页眉子块 / 页脚子块 / 导航树 / 首页卡片等）。**兼容**：`components/` 目录存在 → 组件模式；老主题（无 components/ + 占位符模板）→ 自动回退 C++ 硬编码子块，零改动。内置组件：`Header` `Footer` `LeftNav` `CardGrid`。
 
 ---
 
@@ -292,7 +298,7 @@ Cdocs [全局旗标] <子命令> [参数]
 |--------|------|----------|
 | `init <目录>` | **建站**：生成完整站点骨架（配置 / i18n / 示例文档 / 引擎 + exe），并自动构建 | `--no-engine` 只出内容骨架 |
 | `new <名>`（别名 `add`/`page`） | **建页**：用 archetype 生成 `<名>.md`，自动登记进 route.json 导航 | — |
-| `build` | 构建站点（默认 `docs` → `dist`，位置参数可覆盖） | `-D/--drafts` 含草稿、`--clean` 先清空、`-q/-V` |
+| `build` | 构建站点（默认 `md` → `dist`，位置参数可覆盖） | `-D/--drafts` 含草稿、`--clean` 先清空、`-q/-V` |
 | `serve` | 构建并启动内置 HTTP 预览服务器（默认 8088，仅监听本机，端口被占自动顺延） | `-p/--port`、`-o/--open` 自动开浏览器、`-w/--watch` 热重载、`--no-build` |
 | `clean` | 清空 dist | — |
 | `version` / `help` | 版本 / 帮助 | — |
@@ -330,7 +336,7 @@ Cdocs [全局旗标] <子命令> [参数]
 
 5. **`config.json` 的 `url` 为占位** `https://docsgen.example.com`：上线前替换为真实域名，canonical / sitemap / RSS 链接才指向正确地址。
 
-6. **引擎隐藏目录化（Hugo 式）**：源码、配置、i18n、前端资源、构建脚本、第三方依赖全部收口在 `.Cdocs/`，项目根只保留 `Cdocs.exe` / `docs/` / `dist/` 与少量元文件，用户侧使用路径对齐 Hugo 心智模型。
+6. **引擎隐藏目录化（Hugo 式）**：源码、配置、i18n、前端资源、构建脚本、第三方依赖全部收口在 `.Cdocs/`，项目根只保留 `Cdocs.exe` / `md/` / `dist/` 与少量元文件，用户侧使用路径对齐 Hugo 心智模型。
 
 7. **草稿与生命周期**：front matter 的 `draft: true` 默认不发布，`build -D/--drafts` 强制包含（feeds / sitemap / 导航同步过滤）；`init` = 建站、`new` = 建页、`clean` = 清空产物，与 Hugo/Jekyll 语义一致。
 
@@ -340,9 +346,9 @@ Cdocs [全局旗标] <子命令> [参数]
 
 | 想加什么 | 改哪里 |
 |----------|--------|
-| 新页面 / 新内容 | 在 `docs/` 加 `.md`（`Cdocs new <名>` 自动登记），或在 `.Cdocs/config/route.json` 挂导航 |
+| 新页面 / 新内容 | 在 `md/docs/` 加 `.md`（`Cdocs new <名>` 自动登记），或在 `.Cdocs/config/route.json` 挂导航 |
 | 改站点配置 / 外观 | 改 `.Cdocs/config/config.json`（标题、主题、页眉页脚、插件、主题变量、`home` 首页 hero/卡片白名单、`header.nav` 页眉右侧导航） |
-| 新增一种语言 | 在 `.Cdocs/i18n/` 加字典 + `config.i18n.locales` 登记 + `docs/` 加对应 `.md` |
+| 新增一种语言 | 在 `.Cdocs/i18n/` 加字典 + `config.i18n.locales` 登记 + `md/docs/` 加对应 `.md` |
 | 新交互功能 | 在 `.Cdocs/assets/js/features/` 加 `initX()` 模块，在 `main.js` 挂一行 |
 | 改生成器逻辑 | 改 `src/` 对应模块（core 底座 / 领域模块 / cli / builder），重跑 `build.cmd` |
 | 新构建产物 | 在 `builder.cpp` 的 `run_build` 阶段链里加一个阶段函数（BuildContext 已备好共享状态） |

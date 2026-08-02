@@ -2,7 +2,7 @@
 
 欢迎使用 **Cdocs** —— 一个用 C++ 编写、数据驱动的极简静态文档站点生成器（SSG）。
 
-它把 `docs/` 下的 Markdown 源文，连同 `.Cdocs/` 里的配置、导航、多语言文案与前端资源，编译成一个**纯静态、可离线、零运行时依赖**的站点 `dist/`。
+它把 `md/docs/` 下的 Markdown 源文，连同 `.Cdocs/` 里的配置、导航、多语言文案与前端资源，编译成一个**纯静态、可离线、零运行时依赖**的站点 `dist/`。
 
 ## 它解决什么问题
 
@@ -35,11 +35,11 @@ bash .Cdocs/tools/build.sh      # Linux / macOS
 # 2) 本地预览（内置 C++ 静态服务器，默认 http://localhost:8088）
 Cdocs serve
 
-# 3) 新建一个独立站点（复制引擎 + Cdocs.exe + 示例 docs/intro.md）
+# 3) 新建一个独立站点（复制引擎 + Cdocs.exe + 示例 md/docs/intro.md）
 Cdocs new my-docs
 ```
 
-> 提示：`serve` 内置一个 C++ 写的 HTTP 服务器，**无需安装 Python 或 Node**，仅监听本机 `127.0.0.1`；改完 `docs/` 重跑即可刷新预览。
+> 提示：`serve` 内置一个 C++ 写的 HTTP 服务器，**无需安装 Python 或 Node**，仅监听本机 `127.0.0.1`；改完 `md/docs/` 重跑即可刷新预览。
 
 ## 接下来
 

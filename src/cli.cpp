@@ -17,9 +17,10 @@ void print_help() {
       << bold("用法:") << "\n"
       << "  " << cyan("Cdocs") << " [全局旗标] <命令> [参数]\n\n"
       << bold("命令:") << "\n"
-      << "  " << green("init")  << muted(" <目录> [--no-engine]     ") << "新建完整站点骨架\n"
+      << "  " << green("init")  << muted(" <目录> [--no-engine] [--defaults]") << " 新建站点骨架（交互选择内容区/版本）\n"
       << "  " << green("new")   << muted(" <页面名> [别名 add/page] ") << "新建一篇文档并登记导航\n"
-      << "  " << green("build")  << muted(" [-D] [--clean] [源] [目标]") << " 构建站点（默认 docs → dist）\n"
+      << "  " << green("section")<< muted(" <blog|md|md-v<n>>") << " 添加内容区（blog 唯一、md 唯一、版本可多个）\n"
+      << "  " << green("build")  << muted(" [-D] [--clean] [源] [目标]") << " 构建站点（默认 md → dist）\n"
       << "  " << green("serve")  << muted(" [-p 端口] [-w] [-o]      ") << "构建并启动本地预览服务器\n"
       << "  " << green("deploy") << muted(" [--remote <url>] [--branch <b>] [-m <msg>] [--vercel]") << " 构建并发布\n"
       << "  " << green("clean")  << muted("                       ") << "清空输出目录（dist）\n"
@@ -27,7 +28,7 @@ void print_help() {
       << "  " << green("help")   << muted("                       ") << "显示本帮助\n\n"
       << bold("全局旗标（放在子命令前）:") << "\n"
       << "  " << yellow("-c, --config <目录>") << "  引擎/配置根目录（默认 .Cdocs）\n"
-      << "  " << yellow("-s, --source <目录>") << "  Markdown 源目录（默认 docs）\n"
+      << "  " << yellow("-s, --source <目录>") << "  Markdown 源目录（默认 md）\n"
       << "  " << yellow("-d, --dest <目录>  ") << "  输出目录（默认 dist，serve 也用它作预览根）\n"
       << "  " << yellow("-q, --quiet")        << "        静默输出\n"
       << "  " << yellow("-V, --verbose")      << "        详细输出\n"
@@ -41,6 +42,8 @@ void print_help() {
       << "  " << yellow("serve -o, --open")   << "      启动后自动打开浏览器\n"
       << "  " << yellow("serve --no-build")   << "      跳过构建，直接预览现有 dist\n"
       << "  " << yellow("init --no-engine")   << "      仅生成内容骨架，不复制 Cdocs.exe\n"
+      << "  " << yellow("init --defaults")    << "      跳过交互询问（默认：文档+博客，不带版本）\n"
+      << "  " << yellow("section <名>")       << "      内容区名：blog / docs / md-v<数字>（如 md-v1）\n"
       << "  " << yellow("deploy --remote <url>") << "  指定远端仓库（否则读 config site.deploy.remote）\n"
       << "  " << yellow("deploy --branch <b>") << "   目标分支（默认 gh-pages）\n"
       << "  " << yellow("deploy -m <msg>")    << "      提交信息（默认 \"Deploy Cdocs site\"）\n"
@@ -50,7 +53,7 @@ void print_help() {
       << bold("示例:") << "\n"
       << "  " << cyan("Cdocs init mysite") << muted("            # 新建站点（自动构建）") << "\n"
       << "  " << cyan("Cdocs new my-page") << muted("           # 新建文档并登记导航") << "\n"
-      << "  " << cyan("Cdocs build") << muted("                  # docs → dist") << "\n"
+      << "  " << cyan("Cdocs build") << muted("                  # md → dist") << "\n"
       << "  " << cyan("Cdocs build -D --clean") << muted("      # 含草稿并先清空") << "\n"
       << "  " << cyan("Cdocs serve -o -w -p 3000") << muted(" # 开浏览器+热重载+指定端口") << "\n"
       << "  " << cyan("Cdocs deploy") << muted("               # 构建并推送 gh-pages") << "\n"
@@ -66,7 +69,7 @@ void print_subcommand_help(const std::string& cmd) {
     if (cmd == "build") {
         std::cout << bold(green("Cdocs build")) << " [" << yellow("-D/--drafts") << "] ["
                   << yellow("--clean") << "] [" << yellow("-q/-V") << "] [源] [目标]\n"
-                  << muted("  构建静态站点。默认源=docs，目标=dist；可用全局 -s/-d 覆盖。\n")
+                  << muted("  构建静态站点。默认源=md，目标=dist；可用全局 -s/-d 覆盖。\n")
                   << muted("  -D/--drafts  包含草稿页（默认排除）\n")
                   << muted("  --clean      构建前清空目标目录\n");
     } else if (cmd == "serve") {
@@ -74,10 +77,18 @@ void print_subcommand_help(const std::string& cmd) {
                   << yellow("-o/--open") << "] [" << yellow("-w/--watch") << "] ["
                   << yellow("--no-build") << "]\n"
                   << muted("  构建并启动本地预览服务器（常驻，Ctrl+C 退出）。默认端口 8088。\n")
-                  << muted("  -w/--watch   监听 docs/ 与配置，改动自动重建\n");
+                  << muted("  -w/--watch   监听 md/ 与配置，改动自动重建\n");
     } else if (cmd == "init") {
-        std::cout << bold(green("Cdocs init")) << " <目录> [" << yellow("--no-engine") << "]\n"
-                  << muted("  新建完整站点骨架（config/route/i18n/示例文档/前端资源），并自动构建。\n");
+        std::cout << bold(green("Cdocs init")) << " <目录> [" << yellow("--no-engine") << "] ["
+                  << yellow("--defaults") << "]\n"
+                  << muted("  新建完整站点骨架（config/sidebar/i18n/示例内容/前端资源），并自动构建。\n")
+                  << muted("  交互询问内容区（仅文档 / 仅博客 / 文档+博客）与是否带历史版本（md-v1/）。\n")
+                  << muted("  --defaults 跳过询问（默认 文档+博客、不带版本）。\n");
+    } else if (cmd == "section") {
+        std::cout << bold(green("Cdocs section")) << " <" << yellow("blog|md|md-v<数字>") << ">\n"
+                  << muted("  添加内容区（分类）文件夹。合法名字：blog / docs / md-v<数字>（如 md-v1）。\n")
+                  << muted("  blog 与 md 只能各存在一份（已存在则拒绝）；版本目录可添加多个。\n")
+                  << muted("  自动创建目录/示例并同步 config.json 的 site.sidebar 映射。\n");
     } else if (cmd == "clean") {
         std::cout << bold(green("Cdocs clean")) << "\n"
                   << muted("  清空输出目录（默认 dist）。对标 jekyll clean / docusaurus clear。\n");
@@ -148,13 +159,25 @@ int run_command(std::vector<std::string> args) {
     // init <目录> [--no-engine]：新建完整站点骨架（含引擎资源与 Cdocs.exe）
     if (cmd == "init") {
         if (args.size() < 2) {
-            std::cerr << color::error("用法: Cdocs [-c <引擎>] init <目录> [--no-engine]\n");
+            std::cerr << color::error("用法: Cdocs [-c <引擎>] init <目录> [--no-engine] [--defaults]\n");
             return 2;
         }
-        bool noEngine = false;
-        for (size_t i = 2; i < args.size(); ++i)
+        bool noEngine = false, useDefaults = false;
+        for (size_t i = 2; i < args.size(); ++i) {
             if (args[i] == "--no-engine") noEngine = true;
-        return cmd_init(args[1], !noEngine);
+            else if (args[i] == "--defaults" || args[i] == "-y") useDefaults = true;
+        }
+        return cmd_init(args[1], !noEngine, useDefaults);
+    }
+
+    // section <blog|md|md-v<n>>：添加内容区（分类），名字受限制、blog/md 唯一
+    if (cmd == "section") {
+        if (args.size() < 2) {
+            std::cerr << color::error("用法: Cdocs section <blog|md|md-v<数字>>\n")
+                      << color::muted("  例: Cdocs section blog / docs / md-v2\n");
+            return 2;
+        }
+        return cmd_section(args[1]);
     }
 
     // new/add/page <页面名>：新建内容页（从 archetype），并登记导航

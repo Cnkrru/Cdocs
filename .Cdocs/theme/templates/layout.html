@@ -5,19 +5,46 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>try{var t=localStorage.getItem('theme')||document.documentElement.getAttribute('data-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   <title>{{title}}</title>
-{{meta_desc}}  <link rel="stylesheet" href="{{base}}assets/css/style.css">
-{{highlight_css}}{{custom_head}}</head>
+  <MetaHead/>
+</head>
 <body{{body_class}}>
-{{skip_link}}
-{{header}}
+<SkipLink/>
+<Header/>
   <div class="layout">
-    <aside class="sidebar left">
-      <nav>
-{{left_nav}}      </nav>
-    </aside>
+{{ if nav_tree }}
+    <LeftNav/>
+{{ end }}
     <main class="content" id="main">
-{{breadcrumb}}{{body}}{{last_updated}}{{edit_link}}{{pager}}    </main>
-{{toc_sidebar}}  </div>
-{{footer}}{{back_to_top}}{{highlight_js}}{{search_js}}{{i18n_json}}{{feedback_js}}  <script defer src="{{base}}assets/js/app.js"></script>
+{{ if is_home }}
+      <Hero/>
+{{ if cards }}
+      <CardGrid/>
+{{ end }}
+{{ else }}
+{{ if breadcrumb }}
+      <Breadcrumb/>
+{{ end }}
+{{body}}
+{{ if last_updated }}
+      <LastUpdated/>
+{{ end }}
+{{ if edit.show }}
+      <EditLink/>
+{{ end }}
+{{ if pager.show }}
+      <Pager/>
+{{ end }}
+{{body_end}}
+{{ end }}
+    </main>
+{{ if show_toc }}
+    <TocSidebar/>
+{{ end }}
+  </div>
+<Footer/>
+{{ if backtop.show }}
+<BackToTop/>
+{{ end }}
+<Scripts/>
 </body>
 </html>

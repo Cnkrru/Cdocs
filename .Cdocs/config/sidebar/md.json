@@ -3,11 +3,11 @@
     {
       "items": [
         {
-          "file": "getting-started/intro",
+          "file": "docs/getting-started/intro",
           "title": "{{navIntro}}"
         },
         {
-          "file": "getting-started/guide",
+          "file": "docs/getting-started/guide",
           "title": "{{navGuide}}"
         }
       ],
@@ -16,19 +16,19 @@
     {
       "items": [
         {
-          "file": "generator/commands",
+          "file": "docs/generator/commands",
           "title": "{{navCommands}}"
         },
         {
-          "file": "generator/architecture",
+          "file": "docs/generator/architecture",
           "title": "{{navArchitecture}}"
         },
         {
-          "file": "generator/features",
+          "file": "docs/generator/features",
           "title": "{{navFeatures}}"
         },
         {
-          "file": "generator/versioning",
+          "file": "docs/generator/versioning",
           "title": "{{navVersioning}}"
         }
       ],
@@ -37,25 +37,25 @@
     {
       "items": [
         {
-          "file": "reference/api",
+          "file": "docs/reference/api",
           "title": "{{navApi}}"
         },
         {
-          "file": "reference/themes",
+          "file": "docs/reference/themes",
           "title": "{{navThemes}}"
         },
         {
-          "file": "reference/plugins",
+          "file": "docs/reference/plugins",
           "title": "{{navPlugins}}"
         },
         {
           "items": [
             {
-              "file": "generator/pipeline",
+              "file": "docs/generator/pipeline",
               "title": "{{navPipeline}}"
             },
             {
-              "file": "generator/render",
+              "file": "docs/generator/render",
               "title": "{{navRender}}"
             }
           ],
@@ -67,19 +67,19 @@
     {
       "items": [
         {
-          "file": "tests/test-markdown",
+          "file": "docs/tests/test-markdown",
           "title": "{{navTestMarkdown}}"
         },
         {
-          "file": "tests/test-mermaid",
+          "file": "docs/tests/test-mermaid",
           "title": "{{navTestMermaid}}"
         },
         {
-          "file": "tests/test-katex",
+          "file": "docs/tests/test-katex",
           "title": "{{navTestKatex}}"
         },
         {
-          "file": "tests/test-lightbox",
+          "file": "docs/tests/test-lightbox",
           "title": "{{navTestLightbox}}"
         }
       ],

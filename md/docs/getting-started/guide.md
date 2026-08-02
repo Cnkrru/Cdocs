@@ -3,7 +3,7 @@
 ## 作为命令行工具使用
 
 Cdocs 是一个用 C++ 编写的单文件命令行工具，编译后即为 `Cdocs.exe`（Windows）/ `Cdocs`（Linux·macOS）。
-它读取 `.Cdocs/` 下的配置与前端资源，把 `docs/` 下的 Markdown 渲染成静态站点 `dist/`。
+它读取 `.Cdocs/` 下的配置与前端资源，把 `md/docs/` 下的 Markdown 渲染成静态站点 `dist/`。
 
 ### 一键构建（推荐）
 
@@ -41,9 +41,9 @@ Cdocs serve -d public     # 预览指定目录
 ```
 
 - **serve** 内置一个 C++ 写的静态 HTTP 服务器，**无需安装 Python 或 Node**，仅监听本机 `127.0.0.1`，改完文档重跑即可刷新预览。
-- **new** 会把生成器引擎（`.Cdocs`）、`Cdocs.exe` 与一份示例 `docs/intro.md` 复制到目标目录，新站点开箱即可 `build` / `serve`。
+- **new** 会把生成器引擎（`.Cdocs`）、`Cdocs.exe` 与一份示例 `md/docs/intro.md` 复制到目标目录，新站点开箱即可 `build` / `serve`。
 
-把 `.md` 文件放进 `docs/`，执行后会在 `dist/` 下为每篇生成 `<名字>.html`，并输出 `index.html`、`style.css` 与搜索 / SEO 产物。
+把 `.md` 文件放进 `md/docs/`，执行后会在 `dist/` 下为每篇生成 `<名字>.html`，并输出 `index.html`、`style.css` 与搜索 / SEO 产物。
 
 > 兼容旧用法：`Cdocs docs dist`（位置参数）仍然有效，等价于 `Cdocs build docs dist`。
 

@@ -1,0 +1,5 @@
+{{ if scripts.highlight }}<script defer src="{{base}}assets/deps/highlight.min.js"></script>{{ end }}
+{{ if scripts.search }}<script defer src="{{base}}assets/deps/flexsearch.bundle.min.js"></script>{{ end }}
+{{ if scripts.i18n_json }}<script>window.__I18N__ = {{scripts.i18n_json}};</script>{{ end }}
+{{ if scripts.feedback }}<script>window.__CDOCS_FEEDBACK__ = "{{scripts.feedback}}";</script>{{ end }}
+<script defer src="{{base}}assets/js/app.js"></script>

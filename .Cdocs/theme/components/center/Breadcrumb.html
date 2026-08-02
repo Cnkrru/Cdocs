@@ -1,0 +1,3 @@
+<nav class="breadcrumb" aria-label="面包屑">
+  {{ each breadcrumb }}{{ if href }}<a class="crumb" href="{{href}}">{{title}}</a><span class="sep">/</span>{{ else }}{{ if current }}<span class="crumb current">{{title}}</span>{{ else }}<span class="crumb">{{title}}</span>{{ end }}{{ end }}{{ end }}
+</nav>

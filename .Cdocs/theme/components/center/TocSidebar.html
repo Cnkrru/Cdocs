@@ -1,0 +1,8 @@
+<aside class="sidebar right">
+  <nav class="toc-nav">
+    <div class="toc-title">{{tocTitle}}</div>
+    <ul class="toc-list">
+      {{ each toc_items }}<li class="toc-h{{level}}"><a href="#{{id}}">{{text}}</a></li>{{ end }}
+    </ul>
+  </nav>
+</aside>

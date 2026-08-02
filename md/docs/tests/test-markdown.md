@@ -87,7 +87,7 @@ def greet(name: str) -> str:
 
 ## 图片
 
-![Cdocs 图标](../assets/pwa/icon.svg)
+![Cdocs 图标](../../assets/pwa/icon.svg)
 
 ## Admonition（提示框）
 

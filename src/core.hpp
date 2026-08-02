@@ -150,7 +150,8 @@ struct SiteConfig {
     std::string backToTopLabel = "↑ 顶部";
     std::vector<NavNode> nav;           // 来自 route.json（嵌套树）
     std::string themeVars;              // 注入 <style> 的 CSS 变量覆盖
-    std::string customCssLink;          // 用户自定义 CSS 的 <link>
+    std::string customCssHref;          // 用户自定义 CSS 的 href（数据，MetaHead 组件用）
+    std::string customCssLink;          // 用户自定义 CSS 的 <link>（fallback 用）
     // 首页（config.home）：hero 可选覆盖 + cards 白名单
     //   homeCards 非空 = 只显示白名单页面（顺序即展示顺序）；空 = 自动列出全部非草稿页
     std::string homeTitle, homeSubtitle;   // hero 覆盖（空 = 回退 title/description）

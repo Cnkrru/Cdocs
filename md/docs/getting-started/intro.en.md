@@ -2,7 +2,7 @@
 
 Welcome to **Cdocs** — a minimal, data-driven static documentation site generator (SSG) written in C++.
 
-It compiles the Markdown sources in `docs/` together with the config, navigation, i18n strings and front-end assets in `.Cdocs/` into a **purely static, offline-capable, zero-runtime-dependency** site under `dist/`.
+It compiles the Markdown sources in `md/docs/` together with the config, navigation, i18n strings and front-end assets in `.Cdocs/` into a **purely static, offline-capable, zero-runtime-dependency** site under `dist/`.
 
 ## What problem it solves
 
@@ -35,11 +35,11 @@ bash .Cdocs/tools/build.sh      # Linux / macOS
 # 2) Local preview (built-in C++ static server, default http://localhost:8088)
 Cdocs serve
 
-# 3) Scaffold a standalone site (copies engine + Cdocs.exe + sample docs/intro.md)
+# 3) Scaffold a standalone site (copies engine + Cdocs.exe + sample md/docs/intro.md)
 Cdocs new my-docs
 ```
 
-> Tip: `serve` ships a C++ HTTP server, so **no Python or Node install is required**; it only listens on `127.0.0.1`. Re-run after editing `docs/` to refresh the preview.
+> Tip: `serve` ships a C++ HTTP server, so **no Python or Node install is required**; it only listens on `127.0.0.1`. Re-run after editing `md/docs/` to refresh the preview.
 
 ## Where to go next
 

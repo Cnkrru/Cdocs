@@ -1,19 +1,19 @@
 # Versioning
 
-Cdocs supports **multi-version documentation sites**: copy your current `docs/` into a snapshot like `docs-v1/` or `docs-v2/`, and the build automatically detects it as a historical version, producing `current` (latest) plus each historical version with a **version switcher** in the header. The feature is **on by default — convention over configuration** (no config needed).
+Cdocs supports **multi-version documentation sites**: copy your current `md/` into a snapshot like `md-v1/` or `md-v2/`, and the build automatically detects it as a historical version, producing `current` (latest) plus each historical version with a **version switcher** in the header. The feature is **on by default — convention over configuration** (no config needed).
 
 ## Convention: directory = version
 
 | Directory | Version | Note |
 |-----------|---------|------|
-| `docs/` | `current` | Latest, labeled "最新 / Latest" in the header |
-| `docs-v1/` | `v1` | Historical (`docs-<name>` is auto-detected) |
-| `docs-v2/` | `v2` | And so on |
+| `md/` | `current` | Latest, labeled "最新 / Latest" in the header |
+| `md-v1/` | `v1` | Historical (`md-<name>` is auto-detected) |
+| `md-v2/` | `v2` | And so on |
 
 ## Usage (three steps)
 
 ```bash
-cp -r docs docs-v1     # ① lock a snapshot when shipping v1
+cp -r md md-v1     # ① lock a snapshot when shipping v1
 Cdocs build            # ② build: auto-detects current + v1
 ```
 
@@ -48,7 +48,7 @@ To customize labels / order / default version, declare in the `site` section of 
 ]
 ```
 
-- `name`: version directory name (`docs-<name>`, or `current` for the live `docs/`)
+- `name`: version directory name (`md-<name>`, or `current` for the live `md/`)
 - `label`: display name in the switcher (defaults to `name`)
 - `default`: mark the default version (auto-assigned to the latest when omitted)
 
@@ -60,4 +60,4 @@ When the `versions` array is present, the explicit declaration wins (auto-scan i
 - **Multi-language sites work too**: each version carries its own full `zh-CN` / `en` pair
 - **Compare versions**: versions are built independently and cross-link via `../<name>/`
 
-> Note: `docs-v1` is a content snapshot — track or ship it as you like; delete it and rebuild to return to single-version with **zero residue**.
+> Note: `md-v1` is a content snapshot — track or ship it as you like; delete it and rebuild to return to single-version with **zero residue**.

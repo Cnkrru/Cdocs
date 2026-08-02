@@ -90,6 +90,7 @@ TocResult build_toc(const std::string& html) {
         res.html.replace(lt, gt - lt + 1, newOpen);   // 仅替换开标签，保留 inner + 闭合标签
         items += "        <li class=\"toc-h" + std::to_string(level) + "\"><a href=\"#" + id
                  + "\">" + esc(text) + "</a></li>\n";
+        res.items.push_back(json{{"level", level}, {"text", text}, {"id", id}});   // TOC 数据（组件模式）
         pos = lt + newOpen.size();
     }
     if (!items.empty()) {

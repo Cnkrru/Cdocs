@@ -1,0 +1,7 @@
+{{ if hero }}
+<section class="hero">
+  <h1>{{hero.title}}</h1>
+  {{ if hero.subtitle }}<p class="subtitle">{{hero.subtitle}}</p>{{ end }}
+  {{ if hero.cta_href }}<a class="cta" href="{{hero.cta_href}}">{{hero.cta_text}}</a>{{ end }}
+</section>
+{{ end }}

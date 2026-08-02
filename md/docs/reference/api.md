@@ -100,7 +100,7 @@ Cdocs deploy --setup
       "dir": ".Cdocs/i18n",
       "locales": { "zh-CN": { "label": "简体中文" }, "en": { "label": "English" } }
     },
-    "editLink": { "base": "https://github.com/me/docs/edit/main", "docsDir": "docs" },
+    "editLink": { "base": "https://github.com/me/docs/edit/main", "docsDir": "md" },
     "themeVars": { "--radius": "12px", "--sidebar-left-w": "248px" },
     "customCss": ".Cdocs/theme/assets/css/custom.css",
     "compress": true,

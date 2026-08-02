@@ -6,6 +6,8 @@ import { T } from '../core/i18n.js';
 const FEEDBACK_EP = window.__CDOCS_FEEDBACK__ || '';
 
 export function initFeedback() {
+  // 首页为聚合入口页（body.page-home），不显示「本页有帮助吗？」反馈条
+  if (document.body && document.body.classList.contains('page-home')) return;
   const content = document.querySelector('.content');
   if (!content) return;
   const pageKey = 'fb:' + location.pathname + location.search;

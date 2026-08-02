@@ -4,7 +4,7 @@
 
 Cdocs is a single-file command-line tool written in C++. Once compiled it is `Cdocs.exe`
 (Windows) / `Cdocs` (Linux·macOS). It reads the config and front-end assets under `.Cdocs/`
-and renders the Markdown under `docs/` into a static site in `dist/`.
+and renders the Markdown under `md/docs/` into a static site in `dist/`.
 
 ### One-shot build (recommended)
 
@@ -42,9 +42,9 @@ Cdocs serve -d public     # preview a specific directory
 ```
 
 - **serve** runs a small static HTTP server written in C++ — **no Python or Node required** — bound to `127.0.0.1` only.
-- **new** copies the engine (`.Cdocs`), `Cdocs.exe` and a sample `docs/intro.md` into the target dir, so the new site is ready to `build` / `serve`.
+- **new** copies the engine (`.Cdocs`), `Cdocs.exe` and a sample `md/docs/intro.md` into the target dir, so the new site is ready to `build` / `serve`.
 
-Drop your `.md` files into `docs/`, run it, and `dist/` will contain `<name>.html` per page
+Drop your `.md` files into `md/docs/`, run it, and `dist/` will contain `<name>.html` per page
 plus `index.html`, `style.css` and the search / SEO outputs.
 
 > Backward compatible: `Cdocs docs dist` (positional args) still works, equivalent to `Cdocs build docs dist`.

@@ -24,7 +24,7 @@
 volatile std::sig_atomic_t g_serve_running = 1;
 volatile std::sig_atomic_t g_idle_running  = 1;
 
-fs::path g_source   = "docs";    // -s/--source：Markdown 源目录
+fs::path g_source   = "md";      // -s/--source：Markdown 源目录
 fs::path g_dest     = "dist";    // -d/--dest：输出目录（serve 也用作预览根）
 fs::path g_engine   = ".Cdocs";  // -c/--config：引擎/配置根目录
 bool     g_quiet    = false;     // -q/--quiet：静默输出

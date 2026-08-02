@@ -9,7 +9,7 @@ flowchart LR
   C["config.json"] --> G["Cdocs.exe"]
   R["route.json"] --> G
   L["i18n 字典"] --> G
-  D["docs/*.md"] --> G
+  D["md/docs/*.md"] --> G
   A["assets/ 前端"] --> G
   G --> DIST["dist/ 纯静态（HTML · SEO · RSS · PWA · search.json）"]
 ```

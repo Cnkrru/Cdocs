@@ -19,7 +19,11 @@ bool find_path(const std::vector<NavNode>& nodes, const std::string& target,
                std::vector<std::string>& path);
 
 // 右侧边栏 TOC：扫描 h2~h4，注入稳定 slug id + 锚点链接，并生成目录
-struct TocResult { std::string toc; std::string html; };
+struct TocResult {
+    std::string toc;                 // 目录 HTML（fallback 用）
+    std::string html;                // 注入锚点后的正文
+    json items = json::array();      // 目录数据 [{level, text, id}]（TocSidebar 组件用）
+};
 TocResult build_toc(const std::string& html);
 
 #endif  // CDOCS_PAGES_HPP

@@ -50,26 +50,26 @@ except Exception:
 
 # ---------------- 1. 测试内容（子目录 + front matter + aliases + admonition） ----------------
 print('== 1. 内容构造 ==')
-write(os.path.join(BASE, 'docs', 'intro.md'),
+write(os.path.join(BASE, 'md', 'docs', 'intro.md'),
       '---\ntitle: 介绍\ndescription: 自定义页面描述\nlastmod: 2026-08-02\n---\n# 介绍\n正文。\n')
-write(os.path.join(BASE, 'docs', 'guide', 'install.md'),
+write(os.path.join(BASE, 'md', 'docs', 'guide', 'install.md'),
       '---\ntitle: 安装\nweight: 1\n---\n# 安装指南\n> [!tip] 小提示\n> 用这个技巧。\n\n[坏链接示例](no-such-page.html)\n')
-write(os.path.join(BASE, 'docs', 'guide', 'usage.md'), '# 使用说明\n> 普通引用。\n内容。\n')
-write(os.path.join(BASE, 'docs', 'api', 'ref.md'),
+write(os.path.join(BASE, 'md', 'docs', 'guide', 'usage.md'), '# 使用说明\n> 普通引用。\n内容。\n')
+write(os.path.join(BASE, 'md', 'docs', 'api', 'ref.md'),
       '---\n# 参考\naliases:\n  - legacy/ref\n---\n# API 参考\n内容。\n')
 r = run(['build'])
 ok('build 成功', r.returncode == 0, r.stderr[:300])
 
 # ---------------- 2. 目录自动导航 ----------------
 print('== 2. 目录自动导航 ==')
-ok('子目录页面生成', os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'guide', 'install.html')))
-ok('子目录页面生成2', os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'api', 'ref.html')))
-ok('导航含分组', 'guide' in read(os.path.join(BASE, 'dist', 'zh-CN', 'guide', 'install.html')) or True)
-ok('子目录页导航 ../ 正确', 'href="../intro.html"' in read(os.path.join(BASE, 'dist', 'zh-CN', 'guide', 'install.html')))
+ok('子目录页面生成', os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'guide', 'install.html')))
+ok('子目录页面生成2', os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'api', 'ref.html')))
+ok('导航含分组', 'guide' in read(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'guide', 'install.html')) or True)
+ok('子目录页导航 ../ 正确', 'href="../../docs/intro.html"' in read(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'guide', 'install.html')))
 
 # ---------------- 3. front matter ----------------
 print('== 3. front matter ==')
-intro = read(os.path.join(BASE, 'dist', 'zh-CN', 'intro.html'))
+intro = read(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'intro.html'))
 ok('description 生效', 'content="自定义页面描述"' in intro)
 ok('lastmod 生效', '最后更新于 2026-08-02' in intro or '2026-08-02' in intro)
 ok('aliases 重定向页', os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'legacy', 'ref.html')))
@@ -78,15 +78,15 @@ if os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'legacy', 'ref.html')):
 
 # ---------------- 4. admonition 构建期渲染 ----------------
 print('== 4. admonition ==')
-install = read(os.path.join(BASE, 'dist', 'zh-CN', 'guide', 'install.html'))
+install = read(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'guide', 'install.html'))
 ok('admonition 转换', 'class="admonition tip"' in install)
-ok('普通引用保留', '<blockquote' in read(os.path.join(BASE, 'dist', 'zh-CN', 'guide', 'usage.html')))
+ok('普通引用保留', '<blockquote' in read(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'guide', 'usage.html')))
 
 # ---------------- 5. 死链检测 ----------------
 print('== 5. 死链检测 ==')
 ok('死链被报出', 'no-such-page.html' in r.stderr or '死链' in r.stderr, r.stderr[-200:])
 # 修复坏链接 → 重新 build 应 0 死链
-install_src = os.path.join(BASE, 'docs', 'guide', 'install.md')
+install_src = os.path.join(BASE, 'md', 'docs', 'guide', 'install.md')
 write(install_src, '---\ntitle: 安装\n---\n# 安装指南\n> [!tip] 小提示\n> 技巧。\n')
 r = run(['build'])
 ok('修复后无死链', '死链' not in r.stderr, r.stderr[-300:])
@@ -95,16 +95,16 @@ ok('修复后无死链', '死链' not in r.stderr, r.stderr[-300:])
 print('== 6. 图片压缩 ==')
 # 构造一张大 JPEG（系统 python 无 PIL，用最小纯构造：PNG 用 zlib 手写大图过于复杂，
 # 直接用小 PNG 验证"无收益不生成 webp"；大图 WebP 由手工用例覆盖）
-write(os.path.join(BASE, 'docs', 'assets', 'small.png'),
+write(os.path.join(BASE, 'md', 'static', 'small.png'),
       bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63fcffff3f030005fe02fea7f5d3a70000000049454e44ae426082'))
-write(os.path.join(BASE, 'docs', 'tiny.md'), '# 小图\n![x](assets/small.png)\n')
+write(os.path.join(BASE, 'md', 'docs', 'tiny.md'), '# 小图\n![x](../../static/small.png)\n')
 r = run(['build'])
 # 小图无收益 → 无 webp（幂等逻辑）
-ok('小图无收益不生成 webp', not os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'assets', 'small.webp')))
+ok('小图无收益不生成 webp', not os.path.exists(os.path.join(BASE, 'dist', 'zh-CN', 'static', 'small.webp')))
 
 # ---------------- 7. 资源指纹 ----------------
 print('== 7. 资源指纹 ==')
-api = read(os.path.join(BASE, 'dist', 'zh-CN', 'intro.html'))
+api = read(os.path.join(BASE, 'dist', 'zh-CN', 'docs', 'intro.html'))
 ok('CSS 指纹', 'style.css?v=' in api)
 ok('JS 指纹', 'app.js?v=' in api)
 sw = read(os.path.join(BASE, 'dist', 'zh-CN', 'sw.js'))
@@ -139,11 +139,11 @@ try:
         cc = resp.headers.get('Cache-Control', '')
         ok('assets 长缓存', 'immutable' in cc, cc)
     # ETag + 304
-    with urllib.request.urlopen(f'http://127.0.0.1:{port}/zh-CN/intro.html', timeout=10) as resp:
+    with urllib.request.urlopen(f'http://127.0.0.1:{port}/zh-CN/docs/intro.html', timeout=10) as resp:
         etag = resp.headers.get('ETag', '')
     ok('ETag 返回', bool(etag), etag)
     if etag:
-        req2 = urllib.request.Request(f'http://127.0.0.1:{port}/zh-CN/intro.html',
+        req2 = urllib.request.Request(f'http://127.0.0.1:{port}/zh-CN/docs/intro.html',
                                       headers={'If-None-Match': etag})
         try:
             urllib.request.urlopen(req2, timeout=10)
@@ -151,7 +151,7 @@ try:
         except urllib.error.HTTPError as e:
             ok('304 命中', e.code == 304, e.code)
     # HTML no-cache
-    with urllib.request.urlopen(f'http://127.0.0.1:{port}/zh-CN/intro.html', timeout=10) as resp:
+    with urllib.request.urlopen(f'http://127.0.0.1:{port}/zh-CN/docs/intro.html', timeout=10) as resp:
         ok('HTML no-cache', 'no-cache' in resp.headers.get('Cache-Control', ''))
 except Exception as e:
     ok('serve 请求', False, str(e))

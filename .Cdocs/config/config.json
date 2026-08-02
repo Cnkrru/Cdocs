@@ -19,7 +19,7 @@
     },
     "editLink": {
       "base": "https://github.com/Cnkrru/Cdocs/edit/main",
-      "docsDir": "docs"
+      "docsDir": "md"
     },
     "themeVars": {
       "--radius": "12px",
@@ -29,30 +29,30 @@
     "home": {
       "cards": [
         {
-          "file": "getting-started/intro",
+          "file": "docs/getting-started/intro",
           "desc": "Cdocs 是什么、为什么、怎么用"
         },
         {
-          "file": "getting-started/guide",
+          "file": "docs/getting-started/guide",
           "desc": "安装到 PATH、命令行用法、i18n/版本化/评论等机制"
         },
         {
-          "file": "generator/commands",
+          "file": "docs/generator/commands",
           "desc": "全局旗标、子命令、退出码一览"
         },
         {
-          "file": "generator/architecture",
+          "file": "docs/generator/architecture",
           "desc": "模块化生成器 + run_build 纯编排 + 前端增量式"
         },
         {
-          "file": "generator/features",
+          "file": "docs/generator/features",
           "desc": "零依赖产物、SEO/RSS/PWA、插件系统等能力清单"
         }
       ]
     },
     "compress": true,
     "sidebar": {
-      "docs": "sidebar/docs.json",
+      "md": "sidebar/md.json",
       "blog": "sidebar/blog.json"
     }
   },
@@ -68,7 +68,7 @@
       },
       {
         "title": "{{navDocs}}",
-        "file": "getting-started/intro"
+        "file": "docs/getting-started/intro"
       },
       {
         "title": "{{navBlog}}",

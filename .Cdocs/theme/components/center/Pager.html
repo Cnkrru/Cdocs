@@ -1,0 +1,4 @@
+<nav class="pager">
+  {{ if pager.prev.show }}<a class="pager-item prev" href="{{pager.prev.href}}"><span class="pager-label">{{prevLabel}}</span><span class="pager-title">{{pager.prev.title}}</span></a>{{ else }}<span class="pager-item prev disabled" aria-disabled="true"><span class="pager-label">{{prevLabel}}</span><span class="pager-title">{{pagerNone}}</span></span>{{ end }}
+  {{ if pager.next.show }}<a class="pager-item next" href="{{pager.next.href}}"><span class="pager-label">{{nextLabel}}</span><span class="pager-title">{{pager.next.title}}</span></a>{{ else }}<span class="pager-item next disabled" aria-disabled="true"><span class="pager-label">{{nextLabel}}</span><span class="pager-title">{{pagerNone}}</span></span>{{ end }}
+</nav>

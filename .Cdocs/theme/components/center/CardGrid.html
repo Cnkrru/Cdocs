@@ -1,0 +1,5 @@
+{{ if cards }}
+<section class="cards">
+  {{ each cards }}<a class="card" href="{{href}}"><h3>{{title}}</h3>{{ if desc }}<p class="card-desc">{{desc}}</p>{{ end }}</a>{{ end }}
+</section>
+{{ end }}
