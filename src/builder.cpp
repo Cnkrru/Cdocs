@@ -799,12 +799,21 @@ struct PageCtx {
     json edit = json::object();       // {show, href, label}
     json hero = json::object();       // 首页 {title, subtitle, cta_text, cta_href}
     json cards = json::array();       // 首页卡片 [{title, desc, href}]
+    json blog_posts = json::array();  // 博客列表项（BlogCard each：[{date, href, title, desc}]）
+    json blog_pager = json::object(); // 博客分页 {show, prev_href, next_href, cur:{num}, pages:[{num,href}]}
+    json tags = json::array();        // 标签聚合（TagItem each：[{name, href}]）
+    std::string tag_name;             // 标签单页名（TagPage）
+    json tag_docs = json::array();    // 标签单页文档（TagDocItem each：[{href, title}]）
     std::string body;          // 正文（markdown 内容 HTML——内容层，非组件）
     std::string title, desc;   // 页面标题 / meta 描述
     std::string last_updated;  // 「最后更新于 x · 约 n 分钟阅读」纯文本（LastUpdated 组件渲染）
     std::string body_end;      // 正文末尾注入（插件 HTML，如评论——外部插件产出，非 C++ 硬编码）
-    std::string extra_head;    // head 附加片段（canonical/prev/next/hreflang/OG/JSON-LD——页面元数据）
+    std::string extra_head;    // head 附加片段（fallback 用；地图模式改用 head_meta/head_links/jsonld）
+    json head_meta = json::object();   // head meta 数据（地图模式：{desc, og:[{property,content}], twitter:[{name,content}]}）
+    json head_links = json::array();   // head link 数据（地图模式 MetaLink each：[{rel,href,attrs}]）
+    std::string jsonld;                // JSON-LD 数据（地图模式 JsonLd 组件 <script> 内嵌）
     std::string curLocale, localeSwitch, i18nJson, relBase;
+    json lang_data = json::object();   // 语言切换数据（地图模式）：{show, current, items:[{label,href}]}
     bool is_home = false;
     std::string fallbackLeftNav;   // fallback（无 components/）时的左导航 HTML（render_left_nav 输出）
 };
@@ -1749,17 +1758,22 @@ static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
                                    bool isHome = false) {
     std::string title = pcx.title.empty() ? cfg.title : (pcx.title + " · " + cfg.title);
     std::string lang = pcx.curLocale.empty() ? "zh-CN" : pcx.curLocale;
-    json langSwitch = json::object();
-    std::string lsFinal = pcx.localeSwitch;
-    if (!lsFinal.empty() && !pcx.relBase.empty())
-        lsFinal = replace_all(lsFinal, "href=\"../", "href=\"" + pcx.relBase + "../");
-    if (!lsFinal.empty()) langSwitch["html"] = lsFinal;
+    // 语言切换数据（LangSwitch/LangItem 组件渲染）：items href 加 relBase 前缀（子目录页回退一级）
+    json langSwitch = pcx.lang_data;
+    if (langSwitch.contains("items") && langSwitch["items"].is_array() && !pcx.relBase.empty()) {
+        for (auto& it : langSwitch["items"])
+            if (it.contains("href") && it["href"].is_string())
+                it["href"] = pcx.relBase + it["href"].get<std::string>();
+    }
     json data = {
         {"lang", esc_attr(lang)}, {"theme", esc(cfg.theme)}, {"title", esc(title)},
         {"base", pcx.relBase}, {"body_class", isHome ? " class=\"page-home\"" : ""},
         {"is_home", isHome},
         {"site_title", esc(cfg.title)}, {"site_desc", esc(cfg.description)},
         {"meta_desc", esc(pcx.desc)},
+        {"head_meta", pcx.head_meta},
+        {"head_links", pcx.head_links},
+        {"jsonld", pcx.jsonld},
         {"extra_head", pcx.extra_head},
         {"show_highlight", opt.showCodeHighlight},
         {"theme_vars", cfg.themeVars}, {"custom_css_href", cfg.customCssHref},
@@ -1772,6 +1786,11 @@ static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
         {"edit", pcx.edit},
         {"toc_items", pcx.toc_items},
         {"show_toc", opt.showToc && !pcx.toc_items.empty()},
+        {"blog_posts", pcx.blog_posts},
+        {"blog_pager", pcx.blog_pager},
+        {"tags", pcx.tags},
+        {"tag_name", pcx.tag_name},
+        {"tag_docs", pcx.tag_docs},
         {"body", pcx.body},
         {"last_updated", esc(pcx.last_updated)},
         {"body_end", pcx.body_end},
@@ -1886,6 +1905,7 @@ static void render_locales(BuildContext& b) {
 
         // 语言切换器（仅多语言模式）：链接到兄弟语言的 index.html
         std::string localeSwitch;
+        json langData = json{{"show", false}, {"current", ""}, {"items", json::array()}};
         if (multi) {
             std::ostringstream sw;
             sw << "<div class=\"locale-switch\" aria-label=\"{{localeLabel}}\">";
@@ -1897,6 +1917,14 @@ static void render_locales(BuildContext& b) {
             }
             sw << "</div>";
             localeSwitch = sw.str();
+            // 语言切换数据（地图模式 LangSwitch/LangItem 组件渲染；href 的 relBase 前缀由 map_render_page 修正）
+            langData["show"] = true;
+            langData["current"] = i18n.labels.count(loc) ? i18n.labels.at(loc) : loc;
+            langData["items"] = json::array();
+            for (auto& kv : i18n.labels)
+                if (kv.first != loc)
+                    langData["items"].push_back(json{{"label", kv.second},
+                                                     {"href", "../" + kv.first + "/index.html"}});
         }
 
         // 本语言在站点基址下的前缀（用于 canonical / 交替链接 / 结构化数据）
@@ -1923,6 +1951,93 @@ static void render_locales(BuildContext& b) {
         // hreflang 交替链接（i18n 标准 SEO）：指向其他语言同一页面 + x-default。
         // url 配置时用绝对地址；url 为空时用相对路径，需按页面深度加 ../ 前缀
         // （子目录页如 guide/install 在 zh-CN/guide/，兄弟语言在 ../../en/...）。
+        // head 数据化（地图模式 MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）。
+        // canonical/prev/next/hreflang/RSS/manifest → links；OG/Twitter/theme-color → meta；
+        // JSON-LD → jsonld 字符串。fallback 仍用 headExtra 字符串（双轨并行）。
+        auto build_head_data = [&](const std::string& file, int depth,
+                                   const std::string& title, const std::string& desc,
+                                   std::time_t published, std::time_t modified,
+                                   bool article, const std::vector<std::string>& crumbs,
+                                   const std::string& prevFile, const std::string& nextFile) {
+            json hd = json::object();
+            hd["meta"] = json{{"desc", desc}};
+            hd["meta"]["og"] = json::array();
+            hd["meta"]["names"] = json::array();
+            hd["links"] = json::array();
+            std::string up;
+            for (int k = 0; k < depth + 1; ++k) up += "../";
+            if (!cfg.url.empty()) {
+                std::string u = homeBase;
+                hd["links"].push_back(json{{"rel", "canonical"}, {"href", u + file + ".html"}, {"attrs", ""}});
+                if (!prevFile.empty()) hd["links"].push_back(json{{"rel", "prev"}, {"href", u + prevFile + ".html"}, {"attrs", ""}});
+                if (!nextFile.empty()) hd["links"].push_back(json{{"rel", "next"}, {"href", u + nextFile + ".html"}, {"attrs", ""}});
+                if (i18n.enabled) {
+                    for (auto& kv : i18n.labels) {
+                        if (kv.first == loc) continue;
+                        std::string ou;
+                        if (cfg.url.empty()) ou = up + kv.first + "/" + file + ".html";
+                        else { ou = cfg.url; if (!ou.empty() && ou.back() != '/') ou += '/'; ou += kv.first + "/" + file + ".html"; }
+                        hd["links"].push_back(json{{"rel", "alternate"}, {"href", ou}, {"attrs", " hreflang=\"" + kv.first + "\""}});
+                    }
+                    std::string du;
+                    if (cfg.url.empty()) du = up + i18n.defaultLocale + "/" + file + ".html";
+                    else { du = cfg.url; if (!du.empty() && du.back() != '/') du += '/'; du += i18n.defaultLocale + "/" + file + ".html"; }
+                    hd["links"].push_back(json{{"rel", "alternate"}, {"href", du}, {"attrs", " hreflang=\"x-default\""}});
+                }
+                // JSON-LD：文章页 → BreadcrumbList；首页 → WebSite
+                if (article) {
+                    std::ostringstream items;
+                    int pos = 1;
+                    items << "{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
+                          << esc_attr(i18n_replace("{{home}}", dict)) << "\",\"item\":\""
+                          << homeBase << "index.html\"}";
+                    for (const auto& c : crumbs)
+                        items << ",{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
+                              << esc_attr(i18n_replace(c, dict)) << "\"}";
+                    items << ",{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
+                          << esc_attr(i18n_replace(title, dict)) << "\",\"item\":\"" << homeBase << file << ".html\"}";
+                    hd["jsonld"] = "{\"@context\":\"https://schema.org\",\"@type\":\"BreadcrumbList\",\"itemListElement\":["
+                                   + items.str() + "]}";
+                } else {
+                    hd["jsonld"] = "{\"@context\":\"https://schema.org\",\"@type\":\"WebSite\",\"name\":\""
+                                   + esc_attr(i18n_replace(cfg.title, dict)) + "\",\"url\":\"" + homeBase + "index.html\"}";
+                }
+            } else hd["jsonld"] = "";
+            // RSS + PWA manifest + theme-color（RSS/manifest 用 depth 层 ../；hreflang 用 depth+1 层上级语言目录）
+            std::string upRss;
+            for (int k = 0; k < depth; ++k) upRss += "../";
+            hd["links"].push_back(json{{"rel", "alternate"}, {"href", upRss + "rss.xml"},
+                                       {"attrs", " type=\"application/rss+xml\" title=\"" + esc_attr(feedTitle) + "\""}});
+            hd["links"].push_back(json{{"rel", "manifest"}, {"href", upRss + "manifest.webmanifest"}, {"attrs", ""}});
+            hd["meta"]["names"].push_back(json{{"name", "theme-color"}, {"content", "#a8332a"}});
+            // OG / Twitter（social_head 数据化；摘要去标题前缀）
+            std::string d = desc;
+            size_t pp = 0;
+            while (pp < d.size() && (d[pp] == ' ' || d[pp] == '\t' || d[pp] == '\n' || d[pp] == '\r')) ++pp;
+            if (!title.empty() && d.compare(pp, title.size(), title) == 0) {
+                pp += title.size();
+                while (pp < d.size() && (d[pp] == ' ' || d[pp] == '\t' || d[pp] == '\n' || d[pp] == '\r')) ++pp;
+                d = d.substr(pp);
+            }
+            std::string ogUrl = cfg.url.empty() ? std::string() : homeBase + file + ".html";
+            if (!ogUrl.empty()) hd["meta"]["og"].push_back(json{{"property", "og:url"}, {"content", ogUrl}});
+            hd["meta"]["og"].push_back(json{{"property", "og:type"}, {"content", article ? "article" : "website"}});
+            hd["meta"]["og"].push_back(json{{"property", "og:title"}, {"content", title}});
+            if (!d.empty()) hd["meta"]["og"].push_back(json{{"property", "og:description"}, {"content", d}});
+            if (!cfg.url.empty() && !cfg.title.empty())
+                hd["meta"]["og"].push_back(json{{"property", "og:site_name"}, {"content", cfg.title}});
+            if (!loc.empty()) hd["meta"]["og"].push_back(json{{"property", "og:locale"}, {"content", loc}});
+            if (!ogImageUrl.empty()) hd["meta"]["og"].push_back(json{{"property", "og:image"}, {"content", ogImageUrl}});
+            if (article) {
+                if (published) hd["meta"]["og"].push_back(json{{"property", "article:published_time"}, {"content", iso8601(published)}});
+                if (modified)  hd["meta"]["og"].push_back(json{{"property", "article:modified_time"}, {"content", iso8601(modified)}});
+            }
+            hd["meta"]["names"].push_back(json{{"name", "twitter:card"}, {"content", ogImageUrl.empty() ? "summary" : "summary_large_image"}});
+            hd["meta"]["names"].push_back(json{{"name", "twitter:title"}, {"content", title}});
+            if (!d.empty()) hd["meta"]["names"].push_back(json{{"name", "twitter:description"}, {"content", d}});
+            if (!ogImageUrl.empty()) hd["meta"]["names"].push_back(json{{"name", "twitter:image"}, {"content", ogImageUrl}});
+            return hd;
+        };
         auto alt_links = [&](const std::string& file, int depth) {
             if (!i18n.enabled) return std::string();
             std::string up;
@@ -1961,12 +2076,19 @@ static void render_locales(BuildContext& b) {
             ctx.cards = cards_json(cfg, pages);
             ctx.title = cfg.title;
             ctx.desc = cfg.description;
-            ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.i18nJson = i18nJson;
+            ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
             // head 附加：JSON-LD 站点信息 + 语言交替 + RSS + PWA manifest + 社交分享
             ctx.extra_head = jsonld_website(cfg, homeBase, dict) + alt_links("index", 0)
                            + feedLinkTag + manifestTag
                            + social_head(cfg, feedTitle, cfg.description,
                                          homeBase + "index.html", ogImageUrl, 0, 0, loc, false);
+            // head 数据化（地图模式；fallback 仍用 extra_head）
+            {
+                json hd = build_head_data("index", 0, cfg.title, cfg.description, 0, 0, false, {}, "", "");
+                ctx.head_meta = hd.value("meta", json::object());
+                ctx.head_links = hd.value("links", json::array());
+                ctx.jsonld = hd.value("jsonld", "");
+            }
             std::string landing = mapMode ? map_render_page(cfg, opt, ctx, "home", true)
                                           : render_page(cfg, opt, ctx);
             std::ofstream(locOut / "index.html")
@@ -1986,7 +2108,7 @@ static void render_locales(BuildContext& b) {
         std::vector<std::string> crumbsStore(pages.size()), metaStore(pages.size()),
                                  editStore(pages.size()), headStore(pages.size());
         std::vector<json> tocItemsStore(pages.size()), crumbsJsonStore(pages.size()),
-                         crumbsMapStore(pages.size());
+                         crumbsMapStore(pages.size()), headDataStore(pages.size());
         auto render_content = [&](size_t i) {
             if (pages[i].draft && !includeDrafts) return;   // 草稿默认不发布；-D/--drafts 时包含
             // 内容翻译：优先 md/<file>.<loc>.md（多语言），否则退回默认 .md（部分翻译）
@@ -2089,6 +2211,12 @@ static void render_locales(BuildContext& b) {
             headExtra += fl + mt
                        + social_head(cfg, i18n_replace(pages[i].title, dict), pages[i].desc, ogUrl, ogImageUrl,
                                      pages[i].dateT, pages[i].dateT, loc, true);
+            // head 数据化（地图模式 MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件；fallback 仍用 headExtra）
+            headDataStore[i] = build_head_data(
+                pages[i].file, depth, pages[i].title, pages[i].desc,
+                pages[i].dateT, pages[i].dateT, true, crumbs,
+                (i > 0) ? pages[i - 1].file : std::string(),
+                (i + 1 < pages.size()) ? pages[i + 1].file : std::string());
             // 阶段 1 产物暂存到 pages[i] 之外（避免跨线程重读 pages 元素）：面包屑/元信息/headExtra
             // 用紧凑结构暂存，阶段 2 只读自身索引。
             // （为最小化改动，暂存经局部数组而非 Page 结构体扩容）
@@ -2136,7 +2264,10 @@ static void render_locales(BuildContext& b) {
             auto beIt = g_body_ends.find(curLocale);
             ctx.body_end = (beIt != g_body_ends.end()) ? beIt->second : "";
             ctx.extra_head = headStore[i];
-            ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
+            ctx.head_meta = headDataStore[i].value("meta", json::object());
+            ctx.head_links = headDataStore[i].value("links", json::array());
+            ctx.jsonld = headDataStore[i].value("jsonld", "");
+            ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.lang_data = langData;
             ctx.i18nJson = i18nJson; ctx.relBase = relBase;
             std::string page = mapMode ? map_render_page(cfg, opt, ctx, "doc")
                                        : render_page(cfg, opt, ctx);
@@ -2258,12 +2389,17 @@ static void render_locales(BuildContext& b) {
                 std::string ogUrl = cfg.url.empty() ? std::string() : homeBase + p.file + ".html";
                 headExtra += social_head(cfg, i18n_replace(p.title, dict), p.desc, ogUrl, ogImageUrl,
                                          p.dateT, p.dateT, loc, true);
+                // head 数据化（地图模式；fallback 仍用 headExtra）
+                json hd = build_head_data(p.file, 1, p.title, p.desc, p.dateT, p.dateT, true, {}, "", "");
                 TocResult t = build_toc(p.html);
                 // 博客详情页 → PageCtx
                 PageCtx ctx;
                 ctx.nav_tree = nav_tree_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../", 0);
                 ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../");
                 ctx.fallbackLeftNav = render_left_nav(b.blogNav.empty() ? cfg.nav : b.blogNav, "", 0, "../");
+                ctx.head_meta = hd.value("meta", json::object());
+                ctx.head_links = hd.value("links", json::array());
+                ctx.jsonld = hd.value("jsonld", "");
                 ctx.toc_items = t.items;
                 ctx.pager = pagerBj;
                 ctx.breadcrumb = bcJson;
@@ -2276,7 +2412,7 @@ static void render_locales(BuildContext& b) {
                 auto beIt2 = g_body_ends.find(curLocale);
                 ctx.body_end = (beIt2 != g_body_ends.end()) ? beIt2->second : "";
                 ctx.extra_head = headExtra;
-                ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
+                ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.lang_data = langData;
                 ctx.i18nJson = i18nJson; ctx.relBase = "../";
                 std::string page = mapMode ? map_render_page(cfg, opt, ctx, "blog-post")
                                            : render_page(cfg, opt, ctx);
@@ -2296,11 +2432,34 @@ static void render_locales(BuildContext& b) {
                     std::string relBase = isPageSub ? "../../" : "../";
                     std::string cardBase = isPageSub ? "../" : "";   // 卡片链接前缀
                     std::string navBase  = isPageSub ? "../" : "";   // 分页导航链接前缀
+                    // 博客列表数据（BlogList/BlogCard 组件渲染；分页 BlogPager 数据化）
+                    json posts = json::array();
+                    for (size_t k = pi * kPerPage; k < vis.size() && k < (pi + 1) * kPerPage; ++k) {
+                        const Page& p = *vis[k];
+                        posts.push_back(json{{"date", format_date_local(p.dateT)},
+                                             {"href", cardBase + p.file.substr(5) + ".html"},
+                                             {"title", p.title}, {"desc", p.desc}});
+                    }
+                    auto pageHref = [&](size_t pp) {
+                        if (pp == 0) return navBase + "index.html";
+                        return navBase + "page/" + std::to_string(pp + 1) + ".html";
+                    };
+                    json bp = json::object();
+                    bp["show"] = (pagesN > 1);
+                    if (pagesN > 1) {
+                        if (pi > 0) bp["prev_href"] = pageHref(pi - 1);
+                        if (pi + 1 < pagesN) bp["next_href"] = pageHref(pi + 1);
+                        bp["cur"] = json{{"num", pi + 1}};
+                        bp["pages"] = json::array();
+                        for (size_t pp = 0; pp < pagesN; ++pp)
+                            bp["pages"].push_back(json{{"num", pp + 1}, {"href", pageHref(pp)}});
+                    }
+                    // fallback（老主题无 map/）：body 仍由 C++ 拼接（与旧版一致）
                     std::ostringstream body;
                     body << "<section class=\"blog-list\">\n  <h1>{{blogTitle}}</h1>\n";
                     for (size_t k = pi * kPerPage; k < vis.size() && k < (pi + 1) * kPerPage; ++k) {
                         const Page& p = *vis[k];
-                        std::string pub = format_date_local(p.dateT);   // 本地时区
+                        std::string pub = format_date_local(p.dateT);
                         body << "  <article class=\"blog-card\">\n"
                              << "    <div class=\"blog-date\">" << esc(pub) << "</div>\n"
                              << "    <h2><a href=\"" << esc_attr(cardBase + p.file.substr(5)) << ".html\">"
@@ -2310,10 +2469,6 @@ static void render_locales(BuildContext& b) {
                     }
                     if (pagesN > 1) {
                         body << "  <nav class=\"blog-pager\">\n";
-                        auto pageHref = [&](size_t pp) {
-                            if (pp == 0) return navBase + "index.html";
-                            return navBase + "page/" + std::to_string(pp + 1) + ".html";
-                        };
                         if (pi > 0)
                             body << "    <a class=\"bp-prev\" href=\"" << pageHref(pi - 1) << "\">{{prevLabel}}</a>\n";
                         for (size_t pp = 0; pp < pagesN; ++pp) {
@@ -2327,14 +2482,16 @@ static void render_locales(BuildContext& b) {
                         body << "  </nav>\n";
                     }
                     body << "</section>\n";
-                    // 博客列表页 → PageCtx（内容 body 暂由 C++ 生成，骨架走组件）
+                    // 博客列表页 → PageCtx（mapMode 用组件数据；fallback 用 body）
                     PageCtx ctx;
                     ctx.nav_tree = nav_tree_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase, 0);
                     ctx.fallbackLeftNav = render_left_nav(b.blogNav.empty() ? cfg.nav : b.blogNav, "", 0, relBase);
+                    ctx.blog_posts = posts;
+                    ctx.blog_pager = bp;
                     ctx.body = body.str();
                     ctx.title = "{{blogTitle}}";
                     ctx.desc = cfg.description;
-                ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
+                ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.lang_data = langData;
                 ctx.i18nJson = i18nJson; ctx.relBase = relBase;
                 ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase);
                 std::string page = mapMode ? map_render_page(cfg, opt, ctx, "blog")
@@ -2372,10 +2529,15 @@ static void render_locales(BuildContext& b) {
             }
             if (!tagMap.empty()) {
                 fs::create_directories(locOut / "tags", ec);
+                // 标签聚合数据（TagOverview/TagItem 组件渲染）
+                json tags = json::array();
+                for (auto& kv : tagMap)
+                    // 聚合页位于 tags/ 目录内，标签链接用相对自身的 X.html（不能带 tags/ 前缀）
+                    tags.push_back(json{{"name", kv.first}, {"href", slugify(kv.first) + ".html"}});
+                // fallback（老主题无 map/）：overview body 仍由 C++ 拼接
                 std::string overview = "<section class=\"tag-cloud\"><h1>{{allTags}}</h1>\n"
                                        "  <div class=\"tags\">\n";
                 for (auto& kv : tagMap)
-                    // 聚合页位于 tags/ 目录内，标签链接用相对自身的 X.html（不能带 tags/ 前缀，否则解析成 tags/tags/X.html 404）
                     overview += "    <a class=\"tag\" href=\"" + esc_attr(slugify(kv.first))
                                 + ".html\">#" + esc(kv.first) + "</a>\n";
                 overview += "  </div>\n</section>\n";
@@ -2384,16 +2546,28 @@ static void render_locales(BuildContext& b) {
                 ctx.nav_tree = nav_tree_json(cfg.nav, "", "../", 0);
                 ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
                 ctx.fallbackLeftNav = render_left_nav(cfg.nav, "", 0, "../");
+                ctx.tags = tags;
                 ctx.body = overview;
                 ctx.title = "{{allTags}}";
                 ctx.desc = cfg.description;
-                ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
+                ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.lang_data = langData;
                 ctx.i18nJson = i18nJson; ctx.relBase = "../";
                 std::string ov = mapMode ? map_render_page(cfg, opt, ctx, "tags")
                                          : render_page(cfg, opt, ctx);
                 std::ofstream(locOut / "tags" / "index.html")
                     << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, dict)), locOut) : i18n_replace(ov, dict));
                 for (auto& kv : tagMap) {
+                    // 标签单页数据（TagPage/TagDocItem 组件渲染）
+                    json docs = json::array();
+                    for (auto& fl : kv.second) {
+                        std::string t;
+                        for (const auto& p : pages) if (p.file == fl) { t = p.title; break; }
+                        if (t.empty() && fl.size() > 5 && fl.compare(0, 5, "blog/") == 0)
+                            for (const auto& p : b.blog_posts) if (p.file == fl) { t = p.title; break; }
+                        if (t.empty()) t = fl;
+                        docs.push_back(json{{"href", "../" + fl + ".html"}, {"title", t}});
+                    }
+                    // fallback（老主题无 map/）：tag 单页 body 仍由 C++ 拼接
                     std::string body = "<section class=\"tag-page\"><h1>#" + esc(kv.first) + "</h1>\n"
                                        "  <ul class=\"doc-list\">\n";
                     for (auto& fl : kv.second) {
@@ -2409,12 +2583,14 @@ static void render_locales(BuildContext& b) {
                     tctx.nav_tree = nav_tree_json(cfg.nav, "", "../", 0);
                     tctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
                     tctx.fallbackLeftNav = render_left_nav(cfg.nav, "", 0, "../");
+                    tctx.tag_name = kv.first;
+                    tctx.tag_docs = docs;
                     tctx.body = body;
                     tctx.title = "#" + kv.first;
                     tctx.desc = cfg.description;
-                    tctx.curLocale = curLocale; tctx.localeSwitch = localeSwitch;
+                    tctx.curLocale = curLocale; tctx.localeSwitch = localeSwitch; tctx.lang_data = langData;
                     tctx.i18nJson = i18nJson; tctx.relBase = "../";
-                    std::string tp = mapMode ? map_render_page(cfg, opt, tctx, "tags")
+                    std::string tp = mapMode ? map_render_page(cfg, opt, tctx, "tag-page")
                                              : render_page(cfg, opt, tctx);
                     std::ofstream(locOut / "tags" / (slugify(kv.first) + ".html"))
                         << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(tp, dict)), locOut) : i18n_replace(tp, dict));
@@ -2437,7 +2613,7 @@ static void render_locales(BuildContext& b) {
             ctx.body = nf;
             ctx.title = "404";
             ctx.desc = cfg.description;
-            ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.i18nJson = i18nJson;
+            ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
             std::string nfPage = mapMode ? map_render_page(cfg, opt, ctx, "404")
                                          : render_page(cfg, opt, ctx);
             std::ofstream(locOut / "404.html")

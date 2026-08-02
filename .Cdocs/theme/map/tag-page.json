@@ -156,82 +156,13 @@
       "html": "    <main class=\"content\" id=\"main\">\n"
     },
     {
-      "component": "Breadcrumb",
-      "if": "breadcrumb",
+      "component": "TagPage",
       "sections": [
         {
-          "component": "CrumbLink",
-          "each": "breadcrumb.links"
-        },
-        {
-          "component": "CrumbText",
-          "each": "breadcrumb.texts"
-        },
-        {
-          "component": "CrumbCurrent",
-          "if": "breadcrumb.current"
+          "component": "TagDocItem",
+          "each": "tag_docs"
         }
       ]
-    },
-    {
-      "component": "TagOverview",
-      "sections": [
-        {
-          "component": "TagItem",
-          "each": "tags"
-        }
-      ]
-    },
-    {
-      "html": "    </main>\n  </div>\n"
-    },
-    {
-      "component": "Footer",
-      "if": "footer.show",
-      "sections": [
-        {
-          "component": "FooterText",
-          "if": "footer.text"
-        },
-        {
-          "component": "FooterLinks",
-          "if": "footer.links",
-          "sections": [
-            {
-              "component": "FooterLink",
-              "each": "footer.links"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "component": "BackToTop",
-      "if": "backtop.show"
-    },
-    {
-      "component": "Scripts",
-      "sections": [
-        {
-          "component": "ScriptHighlight",
-          "if": "scripts.highlight"
-        },
-        {
-          "component": "ScriptSearch",
-          "if": "scripts.search"
-        },
-        {
-          "component": "ScriptI18n",
-          "if": "scripts.i18n_json"
-        },
-        {
-          "component": "ScriptFeedback",
-          "if": "scripts.feedback"
-        }
-      ]
-    },
-    {
-      "html": "</body>\n</html>\n"
     }
   ]
 }

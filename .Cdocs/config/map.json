@@ -5,6 +5,7 @@
     "blog": "map/blog.json",
     "blog-post": "map/blog-post.json",
     "tags": "map/tags.json",
-    "404": "map/404.json"
+    "404": "map/404.json",
+    "tag-page": "map/tag-page.json"
   }
 }

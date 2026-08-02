@@ -8,7 +8,23 @@
       "sections": [
         {
           "component": "MetaDescription",
-          "if": "meta_desc"
+          "if": "head_meta.desc"
+        },
+        {
+          "component": "MetaOgItem",
+          "each": "head_meta.og"
+        },
+        {
+          "component": "MetaNameItem",
+          "each": "head_meta.names"
+        },
+        {
+          "component": "MetaLink",
+          "each": "head_links"
+        },
+        {
+          "component": "JsonLd",
+          "if": "jsonld"
         },
         {
           "component": "MetaHighlight",
@@ -21,9 +37,6 @@
         {
           "component": "MetaCss",
           "if": "custom_css_href"
-        },
-        {
-          "html": "{{extra_head}}"
         }
       ]
     },
@@ -82,7 +95,17 @@
             },
             {
               "component": "LangSwitch",
-              "if": "header.lang_switch.html"
+              "if": "header.lang_switch.show",
+              "sections": [
+                {
+                  "component": "LangCurrent",
+                  "if": "header.lang_switch.current"
+                },
+                {
+                  "component": "LangItem",
+                  "each": "header.lang_switch.items"
+                }
+              ]
             },
             {
               "component": "VersionSelect",
@@ -133,7 +156,7 @@
       "html": "    <main class=\"content\" id=\"main\">\n"
     },
     {
-      "html": "{{body}}\n"
+      "component": "NotFound"
     },
     {
       "html": "    </main>\n  </div>\n"
