@@ -1,8 +1,11 @@
-# 行尾规范化：Windows 批处理 CRLF、Shell 脚本 LF（CI/Linux 必须）、其余文本自动
+# 行尾规范化：Windows 批处理 CRLF、Shell/YAML/Python LF（CI/Linux 必须）、其余文本自动
 * text=auto
 
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.reg text eol=crlf
 
-*.sh  text eol=lf
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.py   text eol=lf
