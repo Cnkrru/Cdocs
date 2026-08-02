@@ -37,9 +37,16 @@ print('== 0. init 建站 ==')
 os.makedirs(BASE, exist_ok=True)
 r = run(['init', '.'], cwd=BASE)
 ok('init 成功', r.returncode == 0, r.stderr[:200])
-# 删除 route.json → 触发目录自动导航
+# 删除 route.json + config 的 sidebar 映射 → 触发目录自动导航
 rp = os.path.join(BASE, '.Cdocs', 'config', 'route.json')
 if os.path.exists(rp): os.remove(rp)
+_cfgp = os.path.join(BASE, '.Cdocs', 'config', 'config.json')
+try:
+    _cfg = json.load(open(_cfgp, encoding='utf-8'))
+    _cfg.get('site', {}).pop('sidebar', None)
+    json.dump(_cfg, open(_cfgp, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+except Exception:
+    pass
 
 # ---------------- 1. 测试内容（子目录 + front matter + aliases + admonition） ----------------
 print('== 1. 内容构造 ==')
