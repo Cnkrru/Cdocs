@@ -1,0 +1,37 @@
+# 自动编译 Linux 版 Cdocs 二进制并提交回仓库（供 Vercel 等云端直接运行，无需现场编译）
+# 触发：push 到 main / 手动。产物提交带 [skip ci] 避免循环触发。
+name: Build Linux Binary
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装构建工具（g++ 等）
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: 编译 Linux 版 Cdocs（全静态链接，跨发行版可运行）
+        run: bash .Cdocs/tools/build.sh
+
+      - name: 提交 Cdocs-linux 到仓库
+        run: |
+          cp Cdocs Cdocs-linux
+          chmod +x Cdocs-linux
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cdocs-linux
+          if git diff --cached --quiet; then
+            echo "二进制无变化，跳过提交"
+          else
+            git commit -m "chore: 更新 Linux 构建产物 [skip ci]"
+            git push "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:main
+          fi
