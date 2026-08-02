@@ -1,0 +1,11 @@
+{
+  "name": "vercel-analytics",
+  "description": "Vercel Analytics（Web Analytics）。在 on_config 阶段返回每页正文末尾注入的官方统计 script。",
+  "version": "1.0.0",
+  "hooks": {
+    "on_config": {
+      "cmd": "python scripts/vercel_analytics.py",
+      "timeout": 15
+    }
+  }
+}
