@@ -209,6 +209,7 @@ extern std::string g_versions_json;       // 多版本构建：完整版本列�
 extern std::map<std::string, std::string> g_body_ends;  // 正文末尾注入（插件 on_config 提供，key=语言 → HTML 片段）
 extern std::vector<std::string> g_i18n_missing;  // 构建期收集：i18n 替换未命中的键（供末尾告警）
 extern std::vector<std::string> g_link_broken;   // 构建期收集：死链（页面 → 不存在的站内目标，供末尾告警）
+extern std::set<std::string> g_tpl_keys;         // 构建期收集：所有合法模板数据键（L2 残留检测的"教学示例白名单"）
 extern std::map<std::string, std::string> g_fp;  // 资源指纹：相对路径（assets/css/style.css）→ 内容哈希（8 hex），供 ?v= 引用与 sw 缓存同步
 
 // ---------------- 信号处理 ----------------

@@ -15,6 +15,7 @@
 #include <thread>      // Hugo 式并发渲染：worker pool
 #include <mutex>       // pageSig 并发写保护
 #include <atomic>      // 任务计数器
+#include <regex>       // L2 残留检测：{{}} 模板块 / 数据键 / 组件标签正则扫描
 
 // ---------------- 并发渲染 worker pool（Hugo 式：多核并行渲染页面） ----------------
 // tasks 数量 < 2 或单核时退化为顺序执行；每个工作线程从原子计数器取任务。
@@ -1016,6 +1017,8 @@ static std::string render_page(const SiteConfig& cfg, const RenderOpts& opt, con
         {"scripts", json{{"highlight", opt.showCodeHighlight}, {"search", opt.showSearch},
                          {"i18n_json", pcx.i18nJson}, {"feedback", cfg.feedbackEndpoint}}}
     };
+    // 收集合法模板键 → g_tpl_keys（L2 残留检测白名单：教学文档展示的占位符示例不算残留）
+    for (auto it = data.cbegin(); it != data.cend(); ++it) g_tpl_keys.insert(it.key());
     std::string out = load_layout_template();
     std::vector<std::string> compStack;
     for (int pass = 0; pass < 64; ++pass) {
@@ -2336,6 +2339,79 @@ static void print_summary(BuildContext& b) {
     }
 }
 
+// ============ L2: 构建期残留检测（把模板语法的"静默失败"变成显式警告） ============
+// 扫描输出目录所有 .html，三类残留（对标 Hugo/Vue/Astro 的 fail-fast 哲学，不阻塞构建）：
+//   1) 模板块残留 {{ if/each/else/end ... }} → 语法错误级警告（页面将显示语法原文，
+//      通常是对应块未闭合，tpl_render 无法定位匹配的 {{ end }}）
+//   2) 未解析数据键 {{含下划线的 key}} → 警告（模板数据键拼错；
+//      纯单词/驼峰键是客户端 i18n（{{navHome}}/{{minutes}}），保留给前端 JS 替换，不报）
+//   3) 大写组件标签残留 <PascalCase> → 警告（组件未展开，通常因组件文件缺失/循环引用，
+//      或 expand 未覆盖到该处；跳过 <pre> 代码块内的示例）
+static void scan_output_leftovers(const fs::path& outDir) {
+    std::error_code ec;
+    if (!fs::is_directory(outDir, ec)) return;
+    int total = 0;
+    for (auto it = fs::recursive_directory_iterator(outDir, ec), end = fs::recursive_directory_iterator();
+         it != end; it.increment(ec)) {
+        if (ec) { ec.clear(); continue; }
+        if (!it->is_regular_file(ec)) continue;
+        if (it->path().extension().string() != ".html") continue;
+        std::string html = read_file(it->path());
+        // 剔除 <pre>...</pre> 代码块（文档示例会故意包含 {{}} / 大写标签）
+        std::string s;
+        {
+            size_t i = 0;
+            while (i < html.size()) {
+                size_t pre = html.find("<pre", i);
+                if (pre == std::string::npos) { s += html.substr(i); break; }
+                s += html.substr(i, pre - i);
+                size_t pe = html.find("</pre>", pre + 4);
+                if (pe == std::string::npos) { s += html.substr(pre); break; }
+                i = pe + 6;
+            }
+        }
+        if (s.empty()) continue;
+        std::vector<std::string> found;
+        static const std::regex reBlock(R"(\{\{\s*(if|each|else|end)\b[^}]*\}\})");
+        static const std::regex reKey(R"(\{\{[a-z][a-z0-9_]*_[a-z0-9_.]*\}\})");
+        static const std::regex reComp(R"(<([A-Z][A-Za-z0-9]*)(\s[^>]*)?\s*\/?>)");
+        for (auto m = std::sregex_iterator(s.begin(), s.end(), reBlock); m != std::sregex_iterator(); ++m)
+            found.push_back("模板块残留 " + m->str());
+        for (auto m = std::sregex_iterator(s.begin(), s.end(), reKey); m != std::sregex_iterator(); ++m) {
+            // 教学文档会故意展示 {{left_nav}} 这类占位符示例（行内 <code>）——
+            // 键在合法集合（当前 data 键 + fallback 历史键）中则跳过，只有真拼错的键才报
+            static const std::set<std::string> kLegacyKeys = {
+                // fallback 时代的模板占位符键（themes.md 等教学文档仍在展示）
+                "skip_link","header","left_nav","breadcrumb","edit_link","pager","toc_sidebar",
+                "footer","back_to_top","highlight_js","search_js","i18n_json","feedback_js",
+                "highlight_css","meta_desc","custom_head","last_updated","body","body_class",
+                // 组件子块键（Header/Footer/CardGrid 拆分时的数据键，文档有展示）
+                "left_nav_tree","cards_html","menu_toggle","logo","topnav","search","header_nav",
+                "locale_switch","version_select","theme_toggle","github_link",
+                "footer_show","footer_text","footer_links","extra_head"
+            };
+            std::string key = m->str();
+            key = key.substr(2, key.size() - 4);          // 剥掉 {{ }}
+            if (g_tpl_keys.count(key) || kLegacyKeys.count(key)) continue;
+            found.push_back("未解析数据键 " + m->str());
+        }
+        for (auto m = std::sregex_iterator(s.begin(), s.end(), reComp); m != std::sregex_iterator(); ++m)
+            found.push_back("未展开组件 <" + m->str(1) + ">");
+        if (found.empty()) continue;
+        std::sort(found.begin(), found.end());
+        found.erase(std::unique(found.begin(), found.end()), found.end());
+        total += (int)found.size();
+        if (!g_quiet) {
+            std::cerr << color::warn("警告: ") << "模板残留 " << found.size() << " 处 → "
+                      << fs::relative(it->path(), outDir).string() << "\n";
+            for (const auto& f : found) std::cerr << "      · " << f << "\n";
+        }
+    }
+    if (total && !g_quiet)
+        std::cout << color::muted("  残留检查: ") << color::red(std::to_string(total))
+                  << color::muted(" 处模板残留（{{}} 模板块/数据键/组件标签），请检查上方警告\n");
+}
+
 // --clean 原子替换：把旧输出目录 rename 为 <out>.old（瞬时 O(1)），
 // 避免 Windows Defender 对"删除后同一路径立即重建"的逐文件全量扫描
 // --clean 清理：直接删除输出目录。
@@ -2346,6 +2422,7 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
     // 每次构建重置 i18n 未命中键收集（serve --watch 会反复重建，不能跨次累积）
     g_i18n_missing.clear();
     g_link_broken.clear();
+    g_tpl_keys.clear();
 
     // ---- 版本化文档分派（Docusaurus 风格）----
     // 仅最外层调用执行版本循环（static 重入锁：子版本构建不再分派，避免无限递归）。
@@ -2605,6 +2682,7 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
         f << j.dump();
     }
     print_summary(b);                         // 8) 汇总输出
+    scan_output_leftovers(out_dir);           // 9) 残留检测：{{}}/组件标签残留 → 显式警告
     return 0;
 }
 
