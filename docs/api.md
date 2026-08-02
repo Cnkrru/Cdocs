@@ -159,7 +159,7 @@ Cdocs deploy --vercel
 | --- | --- |
 | `plugins` | 功能开关数组：`search` / `dark-mode` / `pager` / `back-to-top` / `toc` / `code-highlight`，空 = 全部启用 |
 | `backToTop` | `threshold` 滚动触发阈值、`label` 文案 |
-| `comments` | 评论系统：内置 **Giscus**（GitHub Discussions 驱动，无后端）。`repo` + `repoId` + `categoryId` 配齐才注入；缺任一 = 不启用 |
+| `comments` | 评论配置（**由 `giscus` 插件读取**，引擎不再内置）：`provider: "giscus"` + `repo` / `repoId` / `category` / `categoryId` / `mapping`。插件启用后按语言注入评论（见 docs/plugins.md 的 giscus 插件示例） |
 
 ### footer（页脚）
 

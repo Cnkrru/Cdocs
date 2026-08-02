@@ -18,7 +18,9 @@ void plugins_scan_all();
 
 // 执行所有注册在指定钩子上的插件。ctx 为上下文 JSON（发给脚本 stdin 对应物——文件）。
 // 任何插件失败都不抛出、不终止构建。
-void run_plugin_hooks(const std::string& hook, const json& ctx);
+// outs 非空时：收集每个成功插件写的 out.json（JSON 对象），供调用方消费（如 on_config 的注入片段）。
+void run_plugin_hooks(const std::string& hook, const json& ctx,
+                      std::vector<json>* outs = nullptr);
 
 // 是否有已注册插件（有插件时页面渲染退化单线程，保证 on_page_rendered 时序与安全）
 bool plugins_any();

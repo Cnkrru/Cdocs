@@ -96,4 +96,6 @@ else:
 
 ## 与内置功能的取舍
 
-以下能力已**引擎内置**（约定优于配置，无需插件）：giscus 评论（`center.comments` 配置）、版本化文档（`docs-*` 快照自动识别）、RSS/PWA/sitemap/SEO、图片与代码压缩。插件适合做**站点特有**的收尾工作：部署推送（gh-pages）、自定义统计、告警通知、内容校验等。
+以下能力**引擎内置**（约定优于配置，无需插件）：版本化文档（`docs-*` 快照自动识别）、RSS/PWA/sitemap/SEO、图片与代码压缩、正文末尾通用注入（`on_config` 返回 `inject` 片段，任意组件/评论系统可用）。
+
+**评论系统已插件化**（示例：`.Cdocs/plugins/giscus/`）：giscus 插件在 `on_config` 钩子读取 `config.json` 的 `center.comments`，返回 `{ inject: { 语言: HTML } }`，引擎按语言注入每个页面正文末尾。想换评论系统（utterances / Valine / Gitalk 等）只需新建插件并在 `on_config` 输出 `inject`，引擎无需改动。插件适合做**站点特有**的收尾工作：评论/注入组件、部署推送（gh-pages）、自定义统计、告警通知、内容校验等。

@@ -63,6 +63,12 @@ int run_subprocess(const std::string& cmdLine, int timeoutSec) {
 #else
     // POSIX：system 简化（构建场景可接受）；信号等待退出码
     int rc = std::system(cmdLine.c_str());
+    // Linux 常见「只有 python3 没有 python」：cmd 以 "python " 开头且 command not found(127) 时，
+    // 自动回退 python3 重试（对 Windows 分支无影响，其他插件不受影响）。
+    if (rc == 127 && cmdLine.rfind("python ", 0) == 0) {
+        std::string alt = "python3" + cmdLine.substr(6);
+        rc = std::system(alt.c_str());
+    }
     if (rc < 0) return -1;
     if (WIFEXITED(rc)) return WEXITSTATUS(rc);
     return -1;
@@ -120,7 +126,8 @@ bool plugins_any() {
     return g_scanned && !g_plugins.empty();
 }
 
-void run_plugin_hooks(const std::string& hook, const json& ctx) {
+void run_plugin_hooks(const std::string& hook, const json& ctx,
+                      std::vector<json>* outs) {
     if (!g_scanned) return;                 // 未初始化（非 build 路径）直接跳过
     if (g_plugins.empty()) return;          // 无插件，零开销
 
@@ -178,6 +185,7 @@ void run_plugin_hooks(const std::string& hook, const json& ctx) {
                     std::cerr << color::yellow("  ⚠ 插件 ") << p.name << ": " << msg << "\n";
                 else if (!msg.empty() && !g_quiet)
                     std::cout << color::green("  ✓ ") << p.name << color::muted(": ") << msg << "\n";
+                if (outs) outs->push_back(std::move(out));   // 供调用方消费（注入片段等）
             } catch (...) { /* out.json 非 JSON 时忽略 */ }
         }
     }

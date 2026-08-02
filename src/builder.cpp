@@ -358,44 +358,6 @@ static std::string replace_all(std::string s, const std::string& from, const std
     return s;
 }
 
-// 评论系统：center.comments 配置后内置注入 Giscus（GitHub Discussions 驱动，无后端）。
-// 注入点 = 正文末尾（pager 之后）；data-lang 随当前语言（zh-CN/en）；未启用返回空串。
-static std::string render_comments(const SiteConfig& cfg, const std::string& curLocale) {
-    if (!cfg.giscus.enabled) return std::string();
-    std::string lang = (curLocale == "zh-CN") ? "zh-CN" : "en";
-    // 自定义 giscus 主题（Cdocs 水墨暖调，theme/assets/css/giscus-*.css）：
-    // data-theme 指向站内 CSS 绝对 URL，前端 theme.js 在明暗切换时通过 postMessage 同步 iframe；
-    // 未配置 site.url（本地预览）时回退内置 preferred_color_scheme。
-    bool customTheme = !cfg.url.empty();
-    std::string theme = "preferred_color_scheme";
-    if (customTheme) {
-        std::string u = cfg.url;
-        while (!u.empty() && u.back() == '/') u.pop_back();
-        theme = u + "/" + curLocale + "/assets/css/giscus-" + (cfg.theme == "dark" ? "dark" : "light") + ".css";
-    }
-    std::ostringstream o;
-    o << "\n<!-- giscus 评论（Cdocs 内置） -->\n"
-      << "<section class=\"giscus-wrap\" data-plugin=\"giscus\">\n"
-      << "  <div class=\"giscus\"></div>\n"
-      << "  <script src=\"https://giscus.app/client.js\"\n"
-      << "    data-repo=\"" << esc_attr(cfg.giscus.repo) << "\"\n"
-      << "    data-repo-id=\"" << esc_attr(cfg.giscus.repoId) << "\"\n"
-      << "    data-category=\"" << esc_attr(cfg.giscus.category) << "\"\n"
-      << "    data-category-id=\"" << esc_attr(cfg.giscus.categoryId) << "\"\n"
-      << "    data-mapping=\"" << esc_attr(cfg.giscus.mapping) << "\"\n"
-      << "    data-strict=\"0\"\n"
-      << "    data-reactions-enabled=\"1\"\n"
-      << "    data-emit-metadata=\"0\"\n"
-      << "    data-input-position=\"bottom\"\n"
-      << "    data-theme=\"" << esc_attr(theme) << "\""
-      << (customTheme ? " data-custom-theme=\"1\"\n" : "\n")
-      << "    data-lang=\"" << lang << "\"\n"
-      << "    crossorigin=\"anonymous\" async>\n"
-      << "  </script>\n"
-      << "</section>\n";
-    return o.str();
-}
-
 // 整页渲染：读模板 + 注入子块（子块换行规格与原 render_page 输出逐字节一致）
 // relBase：页面相对语言根的目录前缀（""=语言根；"../"=tags/或blog/；"../../"=blog/page/），
 //          模板资源 / header / 导航链接据此定位到正确的 assets 与页面
@@ -462,8 +424,9 @@ static std::string render_page(const SiteConfig& cfg, const RenderOpts& opt,
     std::string bc = breadcrumb.empty() ? std::string() : breadcrumb + "\n";
     std::string lu = lastUpdated.empty() ? std::string() : lastUpdated + "\n";
     std::string pg = (opt.showPager && !pager.empty()) ? pager : std::string();
-    // 评论注入（center.comments 启用时生成，追加在 pager 之后、</main> 之前）
-    std::string comments = render_comments(cfg, curLocale);
+    // 正文末尾注入（插件 on_config 提供，如 giscus 评论；追加在 pager 之后、</main> 之前）
+    auto bodyIt = g_body_ends.find(curLocale);
+    std::string bodyEnd = (bodyIt != g_body_ends.end()) ? bodyIt->second : std::string();
     // 单遍注入模板
     std::string out = tpl_render(load_layout_template(), {
         {"lang", esc_attr(lang)}, {"theme", esc(cfg.theme)}, {"title", esc(title)},
@@ -472,7 +435,7 @@ static std::string render_page(const SiteConfig& cfg, const RenderOpts& opt,
         {"custom_head", cfg.customCssLink + cfg.themeVars + extraHead},
         {"skip_link", skipLink}, {"header", header}, {"left_nav", leftNav},
         {"breadcrumb", bc}, {"body", body + "\n"},
-        {"last_updated", lu}, {"edit_link", editLink}, {"pager", pg + comments},
+        {"last_updated", lu}, {"edit_link", editLink}, {"pager", pg + bodyEnd},
         {"toc_sidebar", tocSide}, {"footer", foot}, {"back_to_top", backTop},
         {"highlight_js", hlJs}, {"search_js", searchJs},
         {"i18n_json", i18nScript}, {"feedback_js", fbScript}
@@ -647,24 +610,6 @@ static void load_site_config(BuildContext& b) {
             auto& b = ctr["backToTop"];
             if (b.contains("threshold")) cfg.backToTopThreshold = b["threshold"].get<int>();
             if (b.contains("label"))     cfg.backToTopLabel = b["label"].get<std::string>();
-        }
-        // 评论系统（center.comments）：内置 Giscus（GitHub Discussions 驱动，无后端）
-        //   { "comments": { "provider": "giscus", "repo": "user/repo", "repoId": "...",
-        //                    "category": "Announcements", "categoryId": "...",
-        //                    "mapping": "pathname", "theme": "preferred_color_scheme" } }
-        //   repo/repoId/categoryId 配齐才注入评论；缺任一 = 不启用（零回归）
-        if (ctr.contains("comments") && ctr["comments"].is_object()) {
-            auto& cm = ctr["comments"];
-            if (cm.value("provider", std::string("giscus")) == "giscus") {
-                cfg.giscus.repo       = cm.value("repo", std::string());
-                cfg.giscus.repoId     = cm.value("repoId", std::string());
-                cfg.giscus.category   = cm.value("category", std::string("Announcements"));
-                cfg.giscus.categoryId = cm.value("categoryId", std::string());
-                cfg.giscus.mapping    = cm.value("mapping", std::string("pathname"));
-                cfg.giscus.theme      = cm.value("theme", std::string("preferred_color_scheme"));
-                cfg.giscus.enabled = !cfg.giscus.repo.empty() && !cfg.giscus.repoId.empty()
-                                  && !cfg.giscus.categoryId.empty();
-            }
         }
         // 编辑此页链接（行业标准交互，指向仓库源文件编辑地址）
         if (site.contains("editLink")) {
@@ -1912,14 +1857,26 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
     plugins_scan_all();
 
     load_site_config(b);                      // 1) 配置 + 导航 + 渲染开关
-    // 插件钩子：配置加载完成后（可让插件增强/修改站点配置相关上下文）
-    run_plugin_hooks("on_config", json{
-        {"source", fs::absolute(in_dir).string()},
-        {"dest",   fs::absolute(out_dir).string()},
-        {"engine", fs::absolute(g_engine).string()},
-        {"title",  b.cfg.title},
-        {"plugins", b.cfg.plugins}
-    });
+    // 插件钩子：配置加载完成后（可让插件增强/修改站点配置相关上下文）。
+    // 收集各插件 out.json 的 inject 对象（key=语言 → 正文末尾注入 HTML，如评论插件），
+    // 渲染时按当前语言插入正文末尾（引擎只提供通用注入能力，不感知具体插件）。
+    g_body_ends.clear();
+    {
+        std::vector<json> outs;
+        run_plugin_hooks("on_config", json{
+            {"source", fs::absolute(in_dir).string()},
+            {"dest",   fs::absolute(out_dir).string()},
+            {"engine", fs::absolute(g_engine).string()},
+            {"title",  b.cfg.title},
+            {"plugins", b.cfg.plugins}
+        }, &outs);
+        for (const auto& o : outs) {
+            if (!o.is_object() || !o.contains("inject") || !o["inject"].is_object()) continue;
+            for (auto& [loc, html] : o["inject"].items())
+                if (html.is_string())
+                    g_body_ends[loc] += html.get<std::string>() + "\n";
+        }
+    }
     if (int rc = prepare_pages(b)) return rc; // 2) 输入检查 + 收集页面 + 预扫描
 
     // 增量构建判定：仅 serve -w 且未 --clean 时启用。

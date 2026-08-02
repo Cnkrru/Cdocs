@@ -35,6 +35,7 @@ bool     g_incremental    = false;// serve -w：增量构建（仅 watch 循环�
 std::string g_cur_version;         // 多版本构建：当前版本名（空 = 单版本）
 std::string g_cur_version_label;   // 多版本构建：当前版本显示名
 std::string g_versions_json;       // 多版本构建：完整版本列表（JSON 数组）
+std::map<std::string, std::string> g_body_ends;  // 正文末尾注入（插件 on_config 提供，key=语言 → HTML）
 std::vector<std::string> g_i18n_missing;   // i18n 未命中键收集（run_build 开头清空、末尾告警）
 std::vector<std::string> g_link_broken;    // 死链收集（页面 → 不存在的站内目标，末尾告警）
 std::map<std::string, std::string> g_fp;   // 资源指纹 map（assets/css/style.css → 8hex 哈希）

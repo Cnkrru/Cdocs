@@ -93,16 +93,6 @@ struct FooterCfg {
     std::vector<Link> links;
 };
 
-// 评论系统（center.comments）：Giscus 内置支持（GitHub Discussions 驱动，无后端）
-struct GiscusCfg {
-    bool enabled = false;            // repo/repoId/categoryId 全部配置后才启用
-    std::string repo, repoId;        // GitHub 仓库 + 仓库 ID（giscus.app 获取）
-    std::string category = "Announcements";
-    std::string categoryId;
-    std::string mapping = "pathname";            // 讨论映射方式
-    std::string theme = "preferred_color_scheme";// 跟随站点明暗（可写 light/dark）
-};
-
 struct Page {
     std::string file;   // 文件名（无扩展）
     std::string title;  // 显示标题
@@ -167,7 +157,6 @@ struct SiteConfig {
     std::string homeCtaText, homeCtaFile;  // CTA 覆盖（空 = 第一篇文档 + {{getStarted}}）
     std::vector<HomeCardCfg> homeCards;
     std::string feedbackEndpoint;          // 反馈上报端点（config.feedback.endpoint，空 = 仅本地记忆）
-    GiscusCfg giscus;                      // 评论系统（center.comments，Giscus 内置）
     bool compress = true;                // 构建期压缩（config site.compress，默认开启：图片 + HTML/CSS）
     int  jpegQuality = 82;               // JPEG 重压质量（config site.jpegQuality，1-100）
     // 版本化文档（versions.json，空 = 单版本普通站点）
@@ -216,6 +205,7 @@ extern bool     g_incremental;    // serve -w：增量构建（仅 watch 循环�
 extern std::string g_cur_version;         // 多版本构建：当前版本名（空 = 单版本）
 extern std::string g_cur_version_label;   // 多版本构建：当前版本显示名
 extern std::string g_versions_json;       // 多版本构建：完整版本列表（JSON 数组，子构建读入 cfg.versions）
+extern std::map<std::string, std::string> g_body_ends;  // 正文末尾注入（插件 on_config 提供，key=语言 → HTML 片段）
 extern std::vector<std::string> g_i18n_missing;  // 构建期收集：i18n 替换未命中的键（供末尾告警）
 extern std::vector<std::string> g_link_broken;   // 构建期收集：死链（页面 → 不存在的站内目标，供末尾告警）
 extern std::map<std::string, std::string> g_fp;  // 资源指纹：相对路径（assets/css/style.css）→ 内容哈希（8 hex），供 ?v= 引用与 sw 缓存同步
