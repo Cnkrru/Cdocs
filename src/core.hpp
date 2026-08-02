@@ -150,6 +150,9 @@ struct SiteConfig {
     std::string ogImage;             // 社交分享封面图（og:image / twitter:image），相对/绝对 URL
     std::string editBase;            // 编辑此页：仓库编辑基址（如 .../edit/main）
     std::string editDocsDir;         // 编辑此页：仓库内文档目录（如 docs）
+    // 侧边栏映射：key=版本源目录名（docs / docs-v1 ...）或 "blog"，value=相对 .Cdocs/config/ 的 JSON 路径
+    // 如 { "docs": "sidebar/docs.json", "docs-v1": "sidebar/v1.json", "blog": "sidebar/blog.json" }
+    std::map<std::string, std::string> sidebarMap;
     HeaderCfg header;
     FooterCfg footer;
     std::vector<std::string> plugins;   // 功能开关，空 = 全部启用

@@ -258,9 +258,26 @@ Docusaurus 风格多版本：**显式配置优先，约定优于配置**。
 
 ---
 
-## 9. 导航 route.json
+## 9. 导航（侧边栏）
 
-`.Cdocs/config/route.json` 的 `sidebar` 数组定义侧边栏，最多 6 层嵌套：
+侧边栏支持**按版本 / 区域分文件配置**（推荐）：`.Cdocs/config/sidebar/` 下放多份 JSON（文件名自定义），
+在 `config.json` 的 `site.sidebar` 用**文件路径映射**声明"哪个 JSON 对应哪个文件夹"：
+
+```json
+"site": {
+  "sidebar": {
+    "docs":    "sidebar/docs.json",   // 当前版本文档（源目录 docs）
+    "docs-v1": "sidebar/v1.json",     // 历史版本（源目录 docs-v1）
+    "blog":    "sidebar/blog.json"    // 博客区
+  }
+}
+```
+
+- key = 版本源目录名（`docs`、`docs-v1`...，自动识别）或 `blog`；value = 相对 `.Cdocs/config/` 的 JSON 路径。
+- 每个版本独立构建时加载自己那份侧边栏；博客页（列表/详情）加载 `blog` 那份。
+- 未配置映射或文件缺失 → 回退全局 `.Cdocs/config/route.json`（旧结构零回归）。
+
+JSON 文件格式（`sidebar` 数组，最多 6 层嵌套）：
 
 ```json
 {
@@ -281,6 +298,7 @@ Docusaurus 风格多版本：**显式配置优先，约定优于配置**。
 - `file`：对应 `docs/<file>.md`，生成 `dist/<loc>/<file>.html`。
 - `url`：外链（与 `file` 二选一）。
 - `items`：下一层导航。
+- 博客区侧边栏的 `file` 写 `blog/xxx`（指向博客文章页）。
 
 ---
 

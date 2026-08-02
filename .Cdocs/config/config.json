@@ -50,7 +50,11 @@
         }
       ]
     },
-    "compress": true
+    "compress": true,
+    "sidebar": {
+      "docs": "sidebar/docs.json",
+      "blog": "sidebar/blog.json"
+    }
   },
   "head": {
     "logo": "{{brand}}",

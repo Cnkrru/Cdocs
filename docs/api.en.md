@@ -185,9 +185,26 @@ Docusaurus-style multi-version docs: **explicit config wins, convention over con
 - Posts are merged into RSS/JSON Feed, search index, and tag aggregation.
 - `date` front matter controls ordering; `draft: true` hides by default.
 
-## 9. Navigation (route.json)
+## 9. Navigation (sidebar)
 
-`.Cdocs/config/route.json` `sidebar` array, up to 6 levels:
+Sidebars can be **split per version / area** (recommended): drop multiple JSON files under `.Cdocs/config/sidebar/`
+(file names are free), and declare the mapping in `config.json` `site.sidebar` — file path → which folder:
+
+```json
+"site": {
+  "sidebar": {
+    "docs":    "sidebar/docs.json",   // current version (source dir docs)
+    "docs-v1": "sidebar/v1.json",     // historical version (source dir docs-v1)
+    "blog":    "sidebar/blog.json"    // blog area
+  }
+}
+```
+
+- key = version source dir name (`docs`, `docs-v1`..., auto-detected) or `blog`; value = path relative to `.Cdocs/config/`.
+- Each version loads its own sidebar when built; blog pages (list/detail) load the `blog` one.
+- Missing mapping / missing file → falls back to the global `.Cdocs/config/route.json` (zero regression for old layouts).
+
+JSON format — `sidebar` array, up to 6 levels:
 
 ```json
 { "sidebar": [ { "title": "{{navGettingStarted}}", "items": [
@@ -196,7 +213,8 @@ Docusaurus-style multi-version docs: **explicit config wins, convention over con
 ] } ] }
 ```
 
-`title` supports `{{key}}`; `file` maps to `docs/<file>.md`; `url` for external links (mutually exclusive with `file`).
+`title` supports `{{key}}`; `file` maps to `docs/<file>.md`; `url` for external links (mutually exclusive with `file`);
+in a blog sidebar use `file: "blog/xxx"` to point at a post.
 
 ## 10. Incremental build & DX
 

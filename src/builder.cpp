@@ -572,6 +572,7 @@ struct BuildContext {
     RenderOpts opt;
     std::vector<Page> pages;
     std::vector<Page> blog_posts;          // 博客流：docs/blog/ 收集的文章（按 date 倒序）
+    std::vector<NavNode> blogNav;          // 博客区独立侧边栏（config.sidebar["blog"]；空 = 沿用文档导航）
     // ---- 增量构建状态（--watch 热重载加速；普通 build 全量） ----
     bool incremental = false;              // 本次构建是否启用增量（serve -w 置位）
     std::map<std::string, std::string> pageSig;  // file+loc -> "mtime:size"（源 .md 指纹）
@@ -814,7 +815,7 @@ static void load_site_config(BuildContext& b) {
         warn_unknown(j,   {"site", "head", "header", "center", "footer"}, "$");
         warn_unknown(site, {"title", "description", "theme", "url", "ogImage", "editLink", "i18n",
                             "themeVars", "customCss", "home", "feedback", "versions", "compress",
-                            "jpegQuality", "plugins"}, "site");
+                            "jpegQuality", "plugins", "sidebar"}, "site");
         warn_unknown(hdr, {"logo", "showSearch", "showThemeToggle", "github", "links", "nav"}, "head");
         warn_unknown(ctr, {"plugins", "backToTop", "comments"}, "center");
         warn_unknown(ftr, {"text", "links"}, "footer");
@@ -822,17 +823,53 @@ static void load_site_config(BuildContext& b) {
             std::cerr << color::yellow("  [config] site.compress 应为布尔值（true/false）\n");
         if (site.contains("jpegQuality") && !site["jpegQuality"].is_number())
             std::cerr << color::yellow("  [config] site.jpegQuality 应为数字（1-100）\n");
+        // 侧边栏映射（site.sidebar；兼容顶层 sidebar）：key=版本源目录名或 "blog"，
+        // value=相对 .Cdocs/config/ 的 JSON 路径。每个版本 / 博客区各一份独立侧边栏。
+        auto read_sidebar_map = [&cfg](const json& obj) {
+            if (!obj.is_object()) return;
+            for (auto& [k, v] : obj.items())
+                if (v.is_string()) cfg.sidebarMap[k] = v.get<std::string>();
+        };
+        read_sidebar_map(site.contains("sidebar") ? site["sidebar"] : json());
+        read_sidebar_map(j.contains("sidebar") ? j["sidebar"] : json());
         } catch (const std::exception& e) {
             // config.json 损坏 / 字段类型错误：不崩溃，用默认配置继续并给出明确提示
             std::cerr << color::error("config.json 解析失败（已用默认配置继续）：") << e.what() << "\n";
         }
     }
 
-    // 2) 侧边栏导航 route.json（支持最多 6 层嵌套，与站点配置解耦）
-    if (fs::exists(route_path)) {
-        json r = json::parse(read_file(route_path));
-        if (r.contains("sidebar"))
-            for (auto& item : r["sidebar"]) cfg.nav.push_back(parse_nav(item));
+    // 2) 侧边栏导航：优先 config.sidebar 映射（key = 版本源目录名，如 docs / docs-v1；
+    //    每个版本一份独立 JSON，文件放 .Cdocs/config/sidebar/），未配置或文件缺失时
+    //    回退全局 route.json（旧结构零回归）。
+    // 博客区独立侧边栏：config.sidebar["blog"]（可选，缺省时博客页沿用文档导航）。
+    {
+        auto load_nav_file = [](const fs::path& p, std::vector<NavNode>& nav) {
+            std::error_code ec;
+            if (!fs::exists(p, ec)) return false;
+            try {
+                json r = json::parse(read_file(p));
+                if (r.contains("sidebar") && r["sidebar"].is_array())
+                    for (auto& item : r["sidebar"]) nav.push_back(parse_nav(item));
+                return true;
+            } catch (...) { return false; }
+        };
+        std::string navKey = b.in_dir.filename().string();   // "docs" / "docs-v1" ...
+        fs::path navPath = route_path;
+        auto it = cfg.sidebarMap.find(navKey);
+        if (it != cfg.sidebarMap.end()) {
+            fs::path p = g_engine / "config" / it->second;
+            std::error_code e2;
+            if (fs::exists(p, e2)) navPath = p;
+        }
+        if (fs::exists(navPath))
+            load_nav_file(navPath, cfg.nav);
+        auto bit = cfg.sidebarMap.find("blog");
+        if (bit != cfg.sidebarMap.end()) {
+            fs::path p = g_engine / "config" / bit->second;
+            std::error_code e2;
+            if (fs::exists(p, e2))
+                load_nav_file(p, b.blogNav);
+        }
     }
 
     // 3) 插件派生渲染开关
@@ -1395,7 +1432,7 @@ static void render_locales(BuildContext& b) {
                 headExtra += social_head(cfg, i18n_replace(p.title, dict), p.desc, ogUrl, ogImageUrl,
                                          p.dateT, p.dateT, loc, true);
                 TocResult t = build_toc(p.html);
-                std::string page = render_page(cfg, opt, render_left_nav(cfg.nav, "", 0, "../"),
+                std::string page = render_page(cfg, opt, render_left_nav(b.blogNav.empty() ? cfg.nav : b.blogNav, "", 0, "../"),
                                               t.html, t.toc, bp.str(), headExtra,
                                               p.title, p.desc, bc.str(), meta, "",
                                               curLocale, localeSwitch, i18nJson, "../");
@@ -1446,7 +1483,7 @@ static void render_locales(BuildContext& b) {
                         body << "  </nav>\n";
                     }
                     body << "</section>\n";
-                    std::string page = render_page(cfg, opt, render_left_nav(cfg.nav, "", 0, relBase),
+                    std::string page = render_page(cfg, opt, render_left_nav(b.blogNav.empty() ? cfg.nav : b.blogNav, "", 0, relBase),
                                                   body.str(), "", "", "", "{{blogTitle}}", cfg.description,
                                                   "", "", "", curLocale, localeSwitch, i18nJson, relBase);
                     if (pi == 0)
@@ -2131,7 +2168,11 @@ int cmd_init(fs::path dir, bool copyExe) {
           << "      \"dir\": \".Cdocs/i18n\",\n"
           << "      \"locales\": { \"zh-CN\": { \"label\": \"简体中文\" }, \"en\": { \"label\": \"English\" } }\n"
           << "    },\n"
-          << "    \"editLink\": { \"base\": \"\", \"docsDir\": \"docs\" }\n"
+          << "    \"editLink\": { \"base\": \"\", \"docsDir\": \"docs\" },\n"
+          << "    \"sidebar\": {\n"
+          << "      \"docs\": \"sidebar/docs.json\",\n"
+          << "      \"blog\": \"sidebar/blog.json\"\n"
+          << "    }\n"
           << "  },\n"
           << "  \"head\": {\n"
           << "    \"logo\": \"\",\n"
@@ -2148,7 +2189,7 @@ int cmd_init(fs::path dir, bool copyExe) {
           << "}\n";
     }
 
-    // 2) route.json（入门分组 + intro/guide 两篇示例）
+    // 2) route.json（入门分组 + intro/guide 两篇示例；作为全局侧边栏兜底）
     {
         std::ofstream o(dir / ".Cdocs/config/route.json");
         o << "{\n"
@@ -2162,6 +2203,23 @@ int cmd_init(fs::path dir, bool copyExe) {
           << "    }\n"
           << "  ]\n"
           << "}\n";
+    }
+
+    // 2.5) sidebar/ 分文件侧边栏（新结构：每个版本 / 博客区一份独立 JSON，名字可自定义）
+    {
+        std::error_code sec;
+        fs::create_directories(dir / ".Cdocs/config/sidebar", sec);
+        std::ofstream(dir / ".Cdocs/config/sidebar/docs.json")
+            << "{\n  \"sidebar\": [\n"
+            << "    {\n      \"title\": \"{{navGettingStarted}}\",\n      \"items\": [\n"
+            << "        { \"title\": \"{{navIntro}}\", \"file\": \"intro\" },\n"
+            << "        { \"title\": \"{{navGuide}}\", \"file\": \"guide\" }\n"
+            << "      ]\n    }\n  ]\n}\n";
+        std::ofstream(dir / ".Cdocs/config/sidebar/blog.json")
+            << "{\n  \"sidebar\": [\n"
+            << "    {\n      \"title\": \"博客\",\n      \"items\": [\n"
+            << "        { \"title\": \"示例博文\", \"file\": \"blog/hello-cdocs\" }\n"
+            << "      ]\n    }\n  ]\n}\n";
     }
 
     // 3) i18n 字典（双语完整，确保可构建）
