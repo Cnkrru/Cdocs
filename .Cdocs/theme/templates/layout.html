@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="{{lang}}" data-theme="{{theme}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>try{var t=localStorage.getItem('theme')||document.documentElement.getAttribute('data-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+  <title>{{title}}</title>
+{{meta_desc}}  <link rel="stylesheet" href="{{base}}assets/css/style.css">
+{{highlight_css}}{{custom_head}}</head>
+<body{{body_class}}>
+{{skip_link}}
+{{header}}
+  <div class="layout">
+    <aside class="sidebar left">
+      <nav>
+{{left_nav}}      </nav>
+    </aside>
+    <main class="content" id="main">
+{{breadcrumb}}{{body}}{{last_updated}}{{edit_link}}{{pager}}    </main>
+{{toc_sidebar}}  </div>
+{{footer}}{{back_to_top}}{{highlight_js}}{{search_js}}{{i18n_json}}{{feedback_js}}  <script defer src="{{base}}assets/js/app.js"></script>
+</body>
+</html>

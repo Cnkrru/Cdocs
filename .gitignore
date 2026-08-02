@@ -1,0 +1,24 @@
+# 构建产物（源码可重建，不入库）
+dist/
+.build/
+
+# 生成器二进制（源码构建即可）
+Cdocs.exe
+Cdocs
+
+# 日志与临时文件
+*.log
+*.tmp
+*.swp
+*~
+
+# 本地工具记忆（个人开发记录，不入库）
+.workbuddy/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 部署测试遗留
+_deploy_test_remote.git/
