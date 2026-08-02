@@ -1,12 +1,1 @@
-{{ if is_group }}
-<button class="nav-group{{ if collapsed }} collapsed{{ end }}" style="--depth:{{depth}}" type="button" aria-expanded="{{ if open }}true{{ else }}false{{ end }}">{{title}}<span class="caret">▾</span></button>
-<div class="nav-group-items" style="--depth:{{depth}}{{ if collapsed }}; display:none{{ end }}">
-  {{ if children }}{{ each children }}<NavItem/>{{ end }}{{ end }}
-</div>
-{{ else }}
-{{ if url }}
-<a href="{{url}}"{{ if external }} target="_blank" rel="noopener"{{ end }} style="--depth:{{depth}}" data-title="{{title}}">{{title}}</a>
-{{ else }}
-<a href="{{base}}{{file}}.html"{{ if active }} class="active" aria-current="page"{{ end }} style="--depth:{{depth}}" data-title="{{title}}">{{title}}</a>
-{{ end }}
-{{ end }}
+    <a href="{{url}}"{{active_class}} style="--depth:1" data-title="{{title}}">{{title}}</a>

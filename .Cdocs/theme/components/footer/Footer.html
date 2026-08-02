@@ -1,8 +1,4 @@
-{{ if footer.show }}
-<footer class="site-footer">
-  <div class="footer-inner">
-    {{ if footer.text }}<span class="footer-text">{{footer.text}}</span>{{ end }}
-    {{ if footer.links }}<nav class="footer-links">{{ each footer.links }}<a href="{{href}}">{{title}}</a>{{ end }}</nav>{{ end }}
-  </div>
-</footer>
-{{ end }}
+  <footer class="site-footer">
+    <div class="footer-inner">
+{{slot}}    </div>
+  </footer>

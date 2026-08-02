@@ -541,6 +541,192 @@ static const json* json_get_path(const json& data, const std::string& path) {
     return nullptr;
 }
 
+// ============ 地图驱动引擎（Map-Driven，v2 架构） ============
+// 语法（纯 HTML 风格，无控制流语法）：
+//   <PascalCase/>                 组件挂载（自闭合）
+//   <PascalCase>...</PascalCase>  容器组件：子内容渲染后拼进 {{slot}}
+//   if="path"                     属性：数据路径真值才渲染该组件
+//   each="path"                   属性：数组循环渲染（每项合并进数据作用域）
+//   {{field}} / {{a.b.c}}         数据孔：路径取值替换（含 {{slot}}）；缺失原样保留（L2 兜底）
+// 数据作用域：全局页面数据 + each 当前项字段覆盖。组件内引用全局数据用嵌套路径（{{edit.href}}）。
+
+static std::string expand_map(const std::string& html, const json& data,
+                              int depth, std::vector<std::string>& stack);
+
+// 数据孔替换（纯文本）：{{a.b.c}} → data 路径取值；缺失原样保留
+static std::string fill_data_holes(const std::string& html, const json& data) {
+    std::string out;
+    out.reserve(html.size() + 128);
+    size_t i = 0;
+    while (i < html.size()) {
+        if (html[i] == '{' && i + 1 < html.size() && html[i + 1] == '{') {
+            size_t end = html.find("}}", i + 2);
+            if (end != std::string::npos) {
+                std::string tok = trim(html.substr(i + 2, end - i - 2));
+                if (!tok.empty()) {
+                    const json* pv = json_get_path(data, tok);
+                    if (pv) { out += json_scalar(*pv); i = end + 2; continue; }
+                }
+            }
+        }
+        out += html[i];
+        ++i;
+    }
+    return out;
+}
+
+// 渲染单个组件实例：读文件 → 递归展开内部组件 → slot 注入 → 数据孔替换
+static std::string render_map_component(const std::string& name, const json& data,
+                                        int depth, std::vector<std::string>& stack,
+                                        const std::string& slotHtml) {
+    if (depth > 32) {
+        if (g_comp_warned.insert("depth:" + name).second)
+            std::cerr << color::warn("警告: ") << "组件嵌套过深（>32 层）: " << name << "\n";
+        return {};
+    }
+    if (std::find(stack.begin(), stack.end(), name) != stack.end()) {
+        if (g_comp_warned.insert("cycle:" + name).second)
+            std::cerr << color::warn("警告: ") << "组件循环引用: " << name << "（该挂载点已移除）\n";
+        return {};
+    }
+    std::string body = load_component(name);
+    if (body.empty()) {
+        if (g_comp_warned.insert("missing:" + name).second)
+            std::cerr << color::warn("警告: ") << "组件文件不存在: components/" << name
+                      << ".html（标签原样保留）\n";
+        return "<" + name + "/>";
+    }
+    stack.push_back(name);
+    std::string out = expand_map(body, data, depth + 1, stack);
+    stack.pop_back();
+    // 始终注入 slot 键（空也注入：无子组件的组件里 {{slot}} → 空串，不留残孔）
+    json ctx = data;
+    ctx["slot"] = slotHtml;
+    out = fill_data_holes(out, ctx);
+    return out;
+}
+
+// 递归展开地图/组件内容：扫组件标签（属性 if/each + 嵌套 + slot），普通 HTML 原样保留
+static std::string expand_map(const std::string& html, const json& data,
+                              int depth, std::vector<std::string>& stack) {
+    std::string out;
+    out.reserve(html.size() + 512);
+    size_t i = 0;
+    while (i < html.size()) {
+        if (html[i] == '<' && i + 1 < html.size() && isupper((unsigned char)html[i + 1])) {
+            size_t gt = html.find('>', i + 1);
+            if (gt != std::string::npos) {
+                std::string tagPart = html.substr(i + 1, gt - i - 1);
+                bool selfClose = !tagPart.empty() && tagPart.back() == '/';
+                std::string tagCore = selfClose ? tagPart.substr(0, tagPart.size() - 1) : tagPart;
+                size_t sp = tagCore.find_first_of(" \t");
+                std::string name = (sp == std::string::npos) ? tagCore : tagCore.substr(0, sp);
+                std::string attrs = (sp == std::string::npos) ? "" : tagCore.substr(sp + 1);
+                bool valid = !name.empty() && isupper((unsigned char)name[0]);
+                for (char c : name)
+                    if (!isalnum((unsigned char)c)) { valid = false; break; }
+                if (valid) {
+                    auto getAttr = [&](const std::string& key) -> std::string {
+                        size_t p = attrs.find(key + "=\"");
+                        if (p == std::string::npos) return {};
+                        size_t v0 = p + key.size() + 2;
+                        size_t v1 = attrs.find('"', v0);
+                        if (v1 == std::string::npos) return {};
+                        return attrs.substr(v0, v1 - v0);
+                    };
+                    std::string ifPath = getAttr("if");
+                    std::string eachPath = getAttr("each");
+                    if (selfClose) {
+                        if (!ifPath.empty()) {
+                            const json* cv = json_get_path(data, ifPath);
+                            if (!cv || !tpl_truthy(*cv)) { i = gt + 1; continue; }
+                        }
+                        if (!eachPath.empty()) {
+                            const json* av = json_get_path(data, eachPath);
+                            if (av && av->is_array()) {
+                                for (const auto& item : *av) {
+                                    json ctx = data;
+                                    if (item.is_object())
+                                        for (auto it = item.begin(); it != item.end(); ++it)
+                                            ctx[it.key()] = it.value();
+                                    out += render_map_component(name, ctx, depth, stack, "");
+                                }
+                            }
+                            i = gt + 1;
+                            continue;
+                        }
+                        out += render_map_component(name, data, depth, stack, "");
+                        i = gt + 1;
+                        continue;
+                    }
+                    // 双标签：找 </Name>，子内容递归展开 → 作为父组件 {{slot}}
+                    std::string closeTag = "</" + name + ">";
+                    size_t close = html.find(closeTag, gt + 1);
+                    if (close != std::string::npos) {
+                        if (!ifPath.empty()) {
+                            const json* cv = json_get_path(data, ifPath);
+                            if (!cv || !tpl_truthy(*cv)) { i = close + closeTag.size(); continue; }
+                        }
+                        std::string inner = html.substr(gt + 1, close - gt - 1);
+                        if (!eachPath.empty()) {
+                            const json* av = json_get_path(data, eachPath);
+                            if (av && av->is_array()) {
+                                for (const auto& item : *av) {
+                                    json ctx = data;
+                                    if (item.is_object())
+                                        for (auto it = item.begin(); it != item.end(); ++it)
+                                            ctx[it.key()] = it.value();
+                                    std::string slot = expand_map(inner, ctx, depth, stack);
+                                    out += render_map_component(name, ctx, depth, stack, slot);
+                                }
+                            }
+                        } else {
+                            std::string slot = expand_map(inner, data, depth, stack);
+                            out += render_map_component(name, data, depth, stack, slot);
+                        }
+                        i = close + closeTag.size();
+                        continue;
+                    }
+                    // 未闭合双标签：fall through 原样
+                }
+            }
+        }
+        out += html[i];
+        ++i;
+    }
+    return out;
+}
+
+// 地图主入口：读 config/map.json 注册表 → theme/map/<name>.html → 展开组件 → 数据孔替换
+static std::string compose_page(const std::string& mapName, const json& data) {
+    // config/map.json：页面类型 → 地图文件（相对主题根）。地图不硬编码进 C++，全由注册表驱动。
+    std::string mapPath;
+    fs::path cfgPath = g_engine / "config" / "map.json";
+    std::error_code cec;
+    if (fs::is_regular_file(cfgPath, cec)) {
+        try {
+            json j = json::parse(read_file(cfgPath));
+            if (j.contains("maps") && j["maps"].is_object() && j["maps"].contains(mapName))
+                mapPath = j["maps"][mapName].get<std::string>();
+        } catch (...) {}
+    }
+    fs::path mp = mapPath.empty() ? (theme_root() / "map" / (mapName + ".html"))
+                                  : (theme_root() / mapPath);
+    std::error_code ec;
+    if (!fs::is_regular_file(mp, ec)) {
+        if (g_comp_warned.insert("map:" + mapName).second)
+            std::cerr << color::warn("警告: ") << "页面地图不存在: " << mp
+                      << "（使用内置最小骨架兜底）\n";
+        std::string out = "<!DOCTYPE html>\n<html lang=\"" + esc_attr(data.value("lang", "zh-CN"))
+            + "\">\n<head>\n<meta charset=\"utf-8\">\n<title>{{title}}</title>\n</head>\n<body>\n{{body}}\n</body>\n</html>\n";
+        return fill_data_holes(out, data);
+    }
+    std::vector<std::string> stack;
+    std::string out = expand_map(read_file(mp), data, 0, stack);
+    out = fill_data_holes(out, data);
+    return out;
+}
+
 static std::string tpl_render(const std::string& tpl, const json& data,
                               std::vector<std::string>& compStack, int compDepth) {
     std::string out;
@@ -646,10 +832,12 @@ static std::string replace_all(std::string s, const std::string& from, const std
 
 // ============ 页面渲染上下文（组件数据层：C++ 只产数据，HTML 一律在 components/*.html） ============
 struct PageCtx {
-    json nav_tree = json::array();    // 左导航树（{{each}} 递归渲染 NavItem）
+    json nav_tree = json::array();    // 左导航树（fallback/旧组件模式 {{each}} 递归渲染 NavItem）
+    json nav_groups = json::array();  // 左导航 2 层展平（地图模式 NavGroup/NavItem：[{title, items:[{title,url,active_class}]}]）
     json toc_items = json::array();   // 目录项（h2-h4 平铺 [{level,text,id}]）
-    json pager = json::object();      // {show, prev:{show,title,href}, next:{...}}
-    json breadcrumb = json::array();  // 面包屑 [{title, href, current}]（href 空 = 纯文本 span）
+    json pager = json::object();      // {show, prev:{show,hidden,title,href}, next:{...}}
+    json breadcrumb = json::array();  // 面包屑 [{title, href, current}]（fallback 用）
+    json breadcrumb_map = json::object(); // 地图模式面包屑 {links:[{title,href}], texts:[{title}], current}
     json edit = json::object();       // {show, href, label}
     json hero = json::object();       // 首页 {title, subtitle, cta_text, cta_href}
     json cards = json::array();       // 首页卡片 [{title, desc, href}]
@@ -750,9 +938,41 @@ static json nav_tree_json(const std::vector<NavNode>& nodes, const std::string& 
     return arr;
 }
 
+// 左导航 → json（地图模式：人为约束 2 层「分组 → 条目」，替代 NavItem 无限递归）。
+// active_class 是属性级数据孔（" class=\"active\" aria-current=\"page\"" 或空），结构由组件定、状态由数据定。
+static json nav_groups_json(const std::vector<NavNode>& nodes, const std::string& curFile,
+                            const std::string& relBase) {
+    auto item_json = [&](const NavNode& n) {
+        json it;
+        it["title"] = n.title;
+        if (!n.file.empty()) {
+            it["url"] = relBase + n.file + ".html";
+            it["active_class"] = (n.file == curFile) ? " class=\"active\" aria-current=\"page\"" : "";
+        } else {
+            bool external = n.url.rfind("http://", 0) == 0 || n.url.rfind("https://", 0) == 0
+                         || (!n.url.empty() && (n.url[0] == '#' || n.url.rfind("mailto:", 0) == 0));
+            it["url"] = external ? n.url : relBase + n.url;
+            it["active_class"] = "";
+        }
+        return it;
+    };
+    json arr = json::array();
+    for (const auto& n : nodes) {
+        json g;
+        g["title"] = n.title;
+        g["items"] = json::array();
+        if (n.is_group()) {
+            for (const auto& c : n.children) g["items"].push_back(item_json(c));
+        } else {
+            g["items"].push_back(item_json(n));   // 无分组的顶层条目 → 单条目组
+        }
+        arr.push_back(g);
+    }
+    return arr;
+}
+
 // 首页卡片 → json（landing 用）
-static json cards_json(const SiteConfig& cfg, const std::vector<Page>& pages) {
-    std::vector<const Page*> shown;
+static json cards_json(const SiteConfig& cfg, const std::vector<Page>& pages) {    std::vector<const Page*> shown;
     if (!cfg.homeCards.empty()) {
         for (const auto& hc : cfg.homeCards) {
             const Page* found = nullptr;
@@ -786,13 +1006,13 @@ static json pager_json(const std::vector<Page>& pages, size_t i, const std::stri
     json d;
     d["show"] = (i > 0) || (i + 1 < pages.size());
     if (i > 0) {
-        d["prev"] = json{{"show", true}, {"title", pages[i - 1].title},
+        d["prev"] = json{{"show", true}, {"hidden", false}, {"title", pages[i - 1].title},
                          {"href", relBase + pages[i - 1].file + ".html"}};
-    } else d["prev"] = json{{"show", false}};
+    } else d["prev"] = json{{"show", false}, {"hidden", true}};
     if (i + 1 < pages.size()) {
-        d["next"] = json{{"show", true}, {"title", pages[i + 1].title},
+        d["next"] = json{{"show", true}, {"hidden", false}, {"title", pages[i + 1].title},
                          {"href", relBase + pages[i + 1].file + ".html"}};
-    } else d["next"] = json{{"show", false}};
+    } else d["next"] = json{{"show", false}, {"hidden", true}};
     return d;
 }
 
@@ -822,18 +1042,18 @@ static json header_json(const SiteConfig& cfg, const RenderOpts& opt, const std:
     size_t n = std::min<size_t>(cfg.header.nav.size(), 6);
     for (size_t i = 0; i < n; ++i) d["header_nav"].push_back(link_json(cfg.header.nav[i], relBase));
     d["lang_switch"] = langSwitch;
-    d["versions"] = json::array();
+    d["versions"] = json::object();
     if (cfg.versions.size() > 1) {
+        d["versions"]["current"] = json{{"label", cfg.curVersionLabel.empty() ? cfg.curVersion : cfg.curVersionLabel}};
+        d["versions"]["links"] = json::array();
         for (const auto& v : cfg.versions) {
+            if (v.name == cfg.curVersion) continue;   // current 已放入 current
             json vd;
             vd["label"] = v.label;
-            vd["current"] = (v.name == cfg.curVersion);
-            if (v.name != cfg.curVersion) {
-                vd["href"] = curLocale.empty()
-                             ? "../" + v.name + "/index.html"
-                             : "../../" + v.name + "/" + curLocale + "/index.html";
-            }
-            d["versions"].push_back(vd);
+            vd["href"] = curLocale.empty()
+                         ? "../" + v.name + "/index.html"
+                         : "../../" + v.name + "/" + curLocale + "/index.html";
+            d["versions"]["links"].push_back(vd);
         }
     }
     d["cur_version"] = cfg.curVersionLabel.empty() ? cfg.curVersion : cfg.curVersionLabel;
@@ -1564,8 +1784,63 @@ static int prepare_pages(BuildContext& b) {
     return 0;   // 到达此处即收集成功
 }
 
+// ============ 地图模式整页渲染（v2：读 theme/map/<type>.html 按图拼接，无自定义控制流语法） ============
+// 数据：C++ 只产 json（PageCtx + 环境数据），HTML 全部在 theme/map/*.html + theme/components/**。
+static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
+                                   const PageCtx& pcx, const std::string& mapType,
+                                   bool isHome = false) {
+    std::string title = pcx.title.empty() ? cfg.title : (pcx.title + " · " + cfg.title);
+    std::string lang = pcx.curLocale.empty() ? "zh-CN" : pcx.curLocale;
+    json langSwitch = json::object();
+    std::string lsFinal = pcx.localeSwitch;
+    if (!lsFinal.empty() && !pcx.relBase.empty())
+        lsFinal = replace_all(lsFinal, "href=\"../", "href=\"" + pcx.relBase + "../");
+    if (!lsFinal.empty()) langSwitch["html"] = lsFinal;
+    json data = {
+        {"lang", esc_attr(lang)}, {"theme", esc(cfg.theme)}, {"title", esc(title)},
+        {"base", pcx.relBase}, {"body_class", isHome ? " class=\"page-home\"" : ""},
+        {"is_home", isHome},
+        {"site_title", esc(cfg.title)}, {"site_desc", esc(cfg.description)},
+        {"meta_desc", esc(pcx.desc)},
+        {"extra_head", pcx.extra_head},
+        {"show_highlight", opt.showCodeHighlight},
+        {"theme_vars", cfg.themeVars}, {"custom_css_href", cfg.customCssHref},
+        {"header", header_json(cfg, opt, pcx.curLocale, langSwitch, pcx.relBase, isHome)},
+        {"nav_groups", pcx.nav_groups},
+        {"breadcrumb", pcx.breadcrumb_map},
+        {"hero", pcx.hero},
+        {"cards", pcx.cards},
+        {"pager", pcx.pager},
+        {"edit", pcx.edit},
+        {"toc_items", pcx.toc_items},
+        {"show_toc", opt.showToc && !pcx.toc_items.empty()},
+        {"body", pcx.body},
+        {"last_updated", esc(pcx.last_updated)},
+        {"body_end", pcx.body_end},
+        {"skip_label", (pcx.curLocale == "en") ? "Skip to main content" : "跳到主要内容"},
+        {"footer", footer_json(cfg)},
+        {"backtop", json{{"show", opt.showBackToTop}, {"threshold", cfg.backToTopThreshold},
+                         {"label", (cfg.backToTopLabel == "↑ 顶部") ? "{{backToTop}}" : esc_attr(cfg.backToTopLabel)}}},
+        {"scripts", json{{"highlight", opt.showCodeHighlight}, {"search", opt.showSearch},
+                         {"i18n_json", pcx.i18nJson}, {"feedback", cfg.feedbackEndpoint}}}
+    };
+    // 收集合法模板键 → g_tpl_keys（L2 残留检测白名单）
+    for (auto it = data.cbegin(); it != data.cend(); ++it) g_tpl_keys.insert(it.key());
+    std::string out = compose_page(mapType, data);
+    // 首页 layout no-sidebar（地图已写则 find 不命中，无害兜底）
+    if (isHome) {
+        size_t pl = out.find("<div class=\"layout\">");
+        if (pl != std::string::npos)
+            out.replace(pl, std::strlen("<div class=\"layout\">"), "<div class=\"layout no-sidebar\">");
+    }
+    return out;
+}
+
 // 3) 多语言构建循环：每个语言输出到独立子目录（未开启 i18n 时单语言输出到根）
 static void render_locales(BuildContext& b) {
+    // 地图模式（v2）：theme/map/ 存在 → 读 config/map.json + HTML 地图拼接；否则走 fallback 旧路径
+    std::error_code mec;
+    const bool mapMode = fs::is_directory(theme_root() / "map", mec);
     SiteConfig& cfg = b.cfg;
     RenderOpts& opt = b.opt;
     std::vector<Page>& pages = b.pages;
@@ -1734,7 +2009,8 @@ static void render_locales(BuildContext& b) {
                            + feedLinkTag + manifestTag
                            + social_head(cfg, feedTitle, cfg.description,
                                          homeBase + "index.html", ogImageUrl, 0, 0, loc, false);
-            std::string landing = render_page(cfg, opt, ctx);
+            std::string landing = mapMode ? map_render_page(cfg, opt, ctx, "home", true)
+                                          : render_page(cfg, opt, ctx);
             std::ofstream(locOut / "index.html")
                 << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(landing, dict)), locOut) : i18n_replace(landing, dict));
         }
@@ -1751,7 +2027,8 @@ static void render_locales(BuildContext& b) {
         std::vector<std::string> tocHtml(pages.size()), tocNav(pages.size());
         std::vector<std::string> crumbsStore(pages.size()), metaStore(pages.size()),
                                  editStore(pages.size()), headStore(pages.size());
-        std::vector<json> tocItemsStore(pages.size()), crumbsJsonStore(pages.size());
+        std::vector<json> tocItemsStore(pages.size()), crumbsJsonStore(pages.size()),
+                         crumbsMapStore(pages.size());
         auto render_content = [&](size_t i) {
             if (pages[i].draft && !includeDrafts) return;   // 草稿默认不发布；-D/--drafts 时包含
             // 内容翻译：优先 md/<file>.<loc>.md（多语言），否则退回默认 .md（部分翻译）
@@ -1859,6 +2136,19 @@ static void render_locales(BuildContext& b) {
             // （为最小化改动，暂存经局部数组而非 Page 结构体扩容）
             crumbsStore[i] = "";                 // 兼容占位（面包屑已数据化到 crumbsJsonStore）
             crumbsJsonStore[i] = crumbsJson;
+            {
+                // 地图模式面包屑：{links:[有 href], texts:[纯文本], current}（CrumbLink/CrumbText/CrumbCurrent）
+                json cm = json::object();
+                cm["links"] = json::array();
+                cm["texts"] = json::array();
+                for (const auto& item : crumbsJson) {
+                    if (item.value("current", false)) cm["current"] = item["title"];
+                    else if (!item.value("href", "").empty()) cm["links"].push_back(item);
+                    else cm["texts"].push_back(item);
+                }
+                if (!cm.contains("current")) cm["current"] = "";
+                crumbsMapStore[i] = cm;
+            }
             metaStore[i] = updatedText;          // 纯文本（LastUpdated 组件渲染 <div class="page-meta">）
             editStore[i] = editHtml;             // fallback 用（组件模式走 edit_json）
             headStore[i] = headExtra;
@@ -1874,10 +2164,12 @@ static void render_locales(BuildContext& b) {
             // 文档页 → PageCtx（组件模式数据 / fallback 兼容字段）
             PageCtx ctx;
             ctx.nav_tree = nav_tree_json(cfg.nav, pages[i].file, relBase, 0);
+            ctx.nav_groups = nav_groups_json(cfg.nav, pages[i].file, relBase);
             ctx.fallbackLeftNav = render_left_nav(cfg.nav, pages[i].file, 0, relBase);
             ctx.toc_items = tocItemsStore[i];
             ctx.pager = pager_json(pages, i, relBase);
             ctx.breadcrumb = crumbsJsonStore[i];
+            ctx.breadcrumb_map = crumbsMapStore[i];
             ctx.edit = edit_json(cfg, pages[i].file);
             ctx.body = pages[i].html;
             ctx.title = pages[i].title;
@@ -1888,7 +2180,8 @@ static void render_locales(BuildContext& b) {
             ctx.extra_head = headStore[i];
             ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
             ctx.i18nJson = i18nJson; ctx.relBase = relBase;
-            std::string page = render_page(cfg, opt, ctx);
+            std::string page = mapMode ? map_render_page(cfg, opt, ctx, "doc")
+                                       : render_page(cfg, opt, ctx);
             fs::path pageOut = locOut / (pages[i].file + ".html");
             std::error_code pe2;
             fs::create_directories(pageOut.parent_path(), pe2);   // 子目录路由需建父目录
@@ -1960,6 +2253,15 @@ static void render_locales(BuildContext& b) {
                 bcJson.push_back(json{{"title", "{{home}}"}, {"href", "../index.html"}, {"current", false}});
                 bcJson.push_back(json{{"title", "{{navBlog}}"}, {"href", "index.html"}, {"current", false}});
                 bcJson.push_back(json{{"title", p.title}, {"href", ""}, {"current", true}});
+                json bcMap = json::object();
+                bcMap["links"] = json::array();
+                bcMap["texts"] = json::array();
+                for (const auto& item : bcJson) {
+                    if (item.value("current", false)) bcMap["current"] = item["title"];
+                    else if (!item.value("href", "").empty()) bcMap["links"].push_back(item);
+                    else bcMap["texts"].push_back(item);
+                }
+                if (!bcMap.contains("current")) bcMap["current"] = "";
                 // 元信息：发布日期 + 阅读时长（纯文本，LastUpdated 组件包 <div class="page-meta">）
                 auto [cjk, words] = count_words(strip_tags(p.html));
                 int mins = (int)std::ceil(cjk / 300.0 + words / 200.0);
@@ -2002,10 +2304,12 @@ static void render_locales(BuildContext& b) {
                 // 博客详情页 → PageCtx
                 PageCtx ctx;
                 ctx.nav_tree = nav_tree_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../", 0);
+                ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../");
                 ctx.fallbackLeftNav = render_left_nav(b.blogNav.empty() ? cfg.nav : b.blogNav, "", 0, "../");
                 ctx.toc_items = t.items;
                 ctx.pager = pagerBj;
                 ctx.breadcrumb = bcJson;
+                ctx.breadcrumb_map = bcMap;
                 ctx.edit = json{{"show", false}};
                 ctx.body = t.html;
                 ctx.title = p.title;
@@ -2016,7 +2320,8 @@ static void render_locales(BuildContext& b) {
                 ctx.extra_head = headExtra;
                 ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
                 ctx.i18nJson = i18nJson; ctx.relBase = "../";
-                std::string page = render_page(cfg, opt, ctx);
+                std::string page = mapMode ? map_render_page(cfg, opt, ctx, "blog-post")
+                                           : render_page(cfg, opt, ctx);
                 std::ofstream(locOut / "blog" / (rel + ".html"))
                     << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
             }
@@ -2071,9 +2376,11 @@ static void render_locales(BuildContext& b) {
                     ctx.body = body.str();
                     ctx.title = "{{blogTitle}}";
                     ctx.desc = cfg.description;
-                    ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
-                    ctx.i18nJson = i18nJson; ctx.relBase = relBase;
-                    std::string page = render_page(cfg, opt, ctx);
+                ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
+                ctx.i18nJson = i18nJson; ctx.relBase = relBase;
+                ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase);
+                std::string page = mapMode ? map_render_page(cfg, opt, ctx, "blog")
+                                           : render_page(cfg, opt, ctx);
                     if (pi == 0)
                         std::ofstream(locOut / "blog" / "index.html")
                             << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
@@ -2117,13 +2424,15 @@ static void render_locales(BuildContext& b) {
                 // tags 聚合页 → PageCtx
                 PageCtx ctx;
                 ctx.nav_tree = nav_tree_json(cfg.nav, "", "../", 0);
+                ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
                 ctx.fallbackLeftNav = render_left_nav(cfg.nav, "", 0, "../");
                 ctx.body = overview;
                 ctx.title = "{{allTags}}";
                 ctx.desc = cfg.description;
                 ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch;
                 ctx.i18nJson = i18nJson; ctx.relBase = "../";
-                std::string ov = render_page(cfg, opt, ctx);
+                std::string ov = mapMode ? map_render_page(cfg, opt, ctx, "tags")
+                                         : render_page(cfg, opt, ctx);
                 std::ofstream(locOut / "tags" / "index.html")
                     << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, dict)), locOut) : i18n_replace(ov, dict));
                 for (auto& kv : tagMap) {
@@ -2140,13 +2449,15 @@ static void render_locales(BuildContext& b) {
                     body += "  </ul>\n</section>\n";
                     PageCtx tctx;
                     tctx.nav_tree = nav_tree_json(cfg.nav, "", "../", 0);
+                    tctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
                     tctx.fallbackLeftNav = render_left_nav(cfg.nav, "", 0, "../");
                     tctx.body = body;
                     tctx.title = "#" + kv.first;
                     tctx.desc = cfg.description;
                     tctx.curLocale = curLocale; tctx.localeSwitch = localeSwitch;
                     tctx.i18nJson = i18nJson; tctx.relBase = "../";
-                    std::string tp = render_page(cfg, opt, tctx);
+                    std::string tp = mapMode ? map_render_page(cfg, opt, tctx, "tags")
+                                             : render_page(cfg, opt, tctx);
                     std::ofstream(locOut / "tags" / (slugify(kv.first) + ".html"))
                         << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(tp, dict)), locOut) : i18n_replace(tp, dict));
                 }
@@ -2163,12 +2474,14 @@ static void render_locales(BuildContext& b) {
                 "</section>\n";
             PageCtx ctx;
             ctx.nav_tree = nav_tree_json(cfg.nav, "", "", 0);
+            ctx.nav_groups = nav_groups_json(cfg.nav, "", "");
             ctx.fallbackLeftNav = render_left_nav(cfg.nav, "", 0);
             ctx.body = nf;
             ctx.title = "404";
             ctx.desc = cfg.description;
             ctx.curLocale = curLocale; ctx.localeSwitch = localeSwitch; ctx.i18nJson = i18nJson;
-            std::string nfPage = render_page(cfg, opt, ctx);
+            std::string nfPage = mapMode ? map_render_page(cfg, opt, ctx, "404")
+                                         : render_page(cfg, opt, ctx);
             std::ofstream(locOut / "404.html")
                 << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(nfPage, dict)), locOut) : i18n_replace(nfPage, dict));
         }
@@ -2959,6 +3272,19 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
     // 3) i18n 字典（双语完整，确保可构建）
     std::ofstream(dir / ".Cdocs/i18n/zh-CN.json") << kZhCN;
     std::ofstream(dir / ".Cdocs/i18n/en.json")   << kEn;
+
+    // 4) 页面地图注册表（v2：C++ 构建时读此配置了解有哪些站点地图；地图本体在 theme/map/）
+    std::ofstream(dir / ".Cdocs/config/map.json")
+        << "{\n"
+        << "  \"maps\": {\n"
+        << "    \"home\": \"map/home.html\",\n"
+        << "    \"doc\": \"map/doc.html\",\n"
+        << "    \"blog\": \"map/blog.html\",\n"
+        << "    \"blog-post\": \"map/blog-post.html\",\n"
+        << "    \"tags\": \"map/tags.html\",\n"
+        << "    \"404\": \"map/404.html\"\n"
+        << "  }\n"
+        << "}\n";
 
     // 4) 示例内容（按交互选择：文档 / 博客 / 版本）
     if (needDocs) {
