@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "bash .Cdocs/tools/build.sh && ./Cdocs build",
+  "outputDirectory": "dist"
+}
