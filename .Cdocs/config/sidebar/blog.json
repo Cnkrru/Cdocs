@@ -3,17 +3,10 @@
     {
       "title": "{{navBlog}}",
       "items": [
-        { "file": "blog/hello-cdocs", "title": "Cdocs 0.1 发布" },
-        { "file": "blog/from-cli-to-eco", "title": "从 CLI 到生态" },
-        { "file": "blog/incremental-build", "title": "增量构建" },
-        { "file": "blog/i18n-design", "title": "i18n 设计" },
-        { "file": "blog/lightbox-story", "title": "灯箱诞生记" }
-      ]
-    },
-    {
-      "title": "{{navDocs}}",
-      "items": [
-        { "file": "intro", "title": "{{navIntro}}" }
+        {
+          "file": "blog/hello-cdocs",
+          "title": "{{navHelloCdocs}}"
+        }
       ]
     }
   ]
