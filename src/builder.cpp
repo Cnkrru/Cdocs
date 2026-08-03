@@ -112,9 +112,12 @@ static const json* json_get_path(const json& data, const std::string& path) {
 //   { "component": "Name", "if": "path" }      → 数据路径真值才渲染
 //   { "component": "Name", "each": "path" }    → 数组循环渲染（每项合并进数据作用域）
 //   { "component": "Name", "sections": [...] } → 子序列渲染结果填进组件 {{slot}}
+//   { "component": "Name", "props": {...} }    → props 传参：合并进该组件数据作用域（组件内 {{k}} 可取，
+//                                                 优先级最高）；字符串值中的 {{path}} 引用全局数据
 // 组件 = 纯 HTML 片段 + 数据孔 {{field}} / {{slot}}——没有 {{ if }}/{{ each }} 控制流，
 // 没有 <组件/> 标签，没有属性语法。条件/循环/嵌套全部由 JSON 地图字段表达。
-// 数据作用域：全局页面数据 + each 当前项字段覆盖。
+// 数据作用域优先级：全局页面数据 < each 当前项 < props（最局部优先）。
+// 地图 JSON 顶层可带 "data": {...} 对象 → 合并进全局页面数据（第三方自定义数据源入口）。
 
 static std::string compose_sections(const json& sections, const json& data,
                                     int depth, std::vector<std::string>& stack);
@@ -192,6 +195,19 @@ static std::string compose_sections(const json& sections, const json& data,
             if (!cv || !tpl_truthy(*cv)) continue;
         }
         const json* child = (sec.contains("sections") && sec["sections"].is_array()) ? &sec["sections"] : nullptr;
+        // props 传参：合并进该组件数据作用域（优先级最高）；字符串值中的 {{path}} 引用全局数据
+        json propsObj;
+        if (sec.contains("props") && sec["props"].is_object()) {
+            for (auto it = sec["props"].begin(); it != sec["props"].end(); ++it) {
+                if (it.value().is_string())
+                    propsObj[it.key()] = fill_data_holes(it.value().get<std::string>(), data);
+                else propsObj[it.key()] = it.value();
+            }
+        }
+        auto applyProps = [&](json& ctx) {
+            for (auto it = propsObj.begin(); it != propsObj.end(); ++it)
+                ctx[it.key()] = it.value();
+        };
         // each 循环：数组每项渲染一次（当前项字段合并进数据作用域）
         if (sec.contains("each") && sec["each"].is_string()) {
             const json* av = json_get_path(data, sec["each"].get<std::string>());
@@ -201,12 +217,15 @@ static std::string compose_sections(const json& sections, const json& data,
                     if (item.is_object())
                         for (auto it = item.begin(); it != item.end(); ++it)
                             ctx[it.key()] = it.value();
+                    applyProps(ctx);
                     out += render_map_component(name, ctx, depth, stack, child);
                 }
             }
             continue;
         }
-        out += render_map_component(name, data, depth, stack, child);
+        json ctx = data;
+        applyProps(ctx);
+        out += render_map_component(name, ctx, depth, stack, child);
     }
     return out;
 }
@@ -264,7 +283,8 @@ static json resolve_map_sections(const std::string& mapName, const json& mapRoot
 
 // 地图主入口：读 config/map.json 注册表 → theme/map/<name>.json（递归解析 extends 继承）→ 遍历 sections → 数据孔替换
 static std::string compose_page(const std::string& mapName, const json& data) {
-    // config/map.json：maps（页面类型 → 地图文件）+ templates（父级地图注册）。地图不硬编码进 C++。
+    // config/map.json：maps（页面类型注册数组）+ templates（父级地图注册）。地图不硬编码进 C++。
+    // maps 数组项：{type, map, mode, output?, home?}；兼容旧格式（maps 为对象：类型名 → 地图路径）。
     std::string mapPath;
     json templates = json::object();
     fs::path cfgPath = g_engine / "config" / "map.json";
@@ -272,8 +292,17 @@ static std::string compose_page(const std::string& mapName, const json& data) {
     if (fs::is_regular_file(cfgPath, cec)) {
         try {
             json j = json::parse(read_file(cfgPath));
-            if (j.contains("maps") && j["maps"].is_object() && j["maps"].contains(mapName))
-                mapPath = j["maps"][mapName].get<std::string>();
+            if (j.contains("maps")) {
+                if (j["maps"].is_object() && j["maps"].contains(mapName))
+                    mapPath = j["maps"][mapName].get<std::string>();
+                else if (j["maps"].is_array())
+                    for (const auto& e : j["maps"])
+                        if (e.is_object() && e.value("type", "") == mapName
+                            && e.contains("map") && e["map"].is_string()) {
+                            mapPath = e["map"].get<std::string>();
+                            break;
+                        }
+            }
             if (j.contains("templates") && j["templates"].is_object())
                 templates = j["templates"];
         } catch (...) {}
@@ -295,12 +324,18 @@ static std::string compose_page(const std::string& mapName, const json& data) {
             std::cerr << color::warn("警告: ") << "页面地图 JSON 解析失败: " << mp << "\n";
         return {};
     }
+    // 地图级数据（v5）：地图 JSON 顶层 "data": {...} 合并进页面数据作用域（第三方自定义数据源入口）
+    json mapData = data;
+    if (map.is_object() && map.contains("data") && map["data"].is_object()) {
+        for (auto it = map["data"].begin(); it != map["data"].end(); ++it)
+            mapData[it.key()] = it.value();
+    }
     std::vector<std::string> chain;
     json sections = resolve_map_sections(mapName, map, templates, chain);
     std::vector<std::string> stack;
-    std::string out = compose_sections(sections, data, 0, stack);
+    std::string out = compose_sections(sections, mapData, 0, stack);
     // 地图 html 片段里的顶层数据孔（{{lang}}/{{title}}/{{body}}/{{extra_head}} 等）
-    out = fill_data_holes(out, data);
+    out = fill_data_holes(out, mapData);
     return out;
 }
 
@@ -1022,6 +1057,51 @@ static void render_locales(BuildContext& b) {
         std::cerr << color::error("错误: 主题缺少 theme/map/ 目录（v4 地图驱动必需）\n");
         return;
     }
+    // v5 动态页面类型：config/map.json 的 maps 数组注册所有页面类型（用户可自由增删，
+    // 每个页面类型由 {type, map, mode, output?} 声明；mode 决定数据来源与输出方式）。
+    // 数量上限 kMaxMapTypes 防意外膨胀/资源耗尽（正常主题远达不到）。
+    const int kMaxMapTypes = 64;
+    std::error_code rec2;
+    json mapRegistry;
+    {
+        fs::path rp = g_engine / "config" / "map.json";
+        if (fs::is_regular_file(rp, rec2)) {
+            try { mapRegistry = json::parse(read_file(rp)); } catch (...) {}
+        }
+    }
+    json maps = mapRegistry.value("maps", json());
+    // 旧格式兼容：maps 为对象（类型名 → 地图路径）时按内置类型名推导 mode
+    if (maps.is_object()) {
+        json arr = json::array();
+        std::map<std::string, std::string> legacyMode = {
+            {"home", "home"}, {"doc", "pages"}, {"blog", "blog-list"},
+            {"blog-post", "blog-post"}, {"tags", "tags"}, {"tag-page", "tag-page"}, {"404", "single"}};
+        for (auto it = maps.begin(); it != maps.end(); ++it) {
+            json e;
+            e["type"] = it.key();
+            if (it.value().is_string()) e["map"] = it.value().get<std::string>();
+            auto lm = legacyMode.find(it.key());
+            e["mode"] = (lm != legacyMode.end()) ? lm->second : "single";
+            if (it.key() == "404") e["output"] = "404.html";
+            arr.push_back(e);
+        }
+        maps = arr;
+    }
+    if (!maps.is_array() || maps.empty()) {
+        std::cerr << color::error("错误: config/map.json 缺少 maps 数组（v5 页面类型注册表）\n");
+        return;
+    }
+    if (maps.size() > kMaxMapTypes) {
+        std::cerr << color::error("错误: 页面类型数量 ") << maps.size() << " 超过上限 "
+                  << kMaxMapTypes << "（config/map.json 的 maps 数组）\n";
+        return;
+    }
+    // 按 mode 查找第一个匹配的页面类型名（找不到返回默认名，保持旧行为）
+    auto typeForMode = [&](const std::string& mode, const std::string& def) {
+        for (const auto& e : maps)
+            if (e.is_object() && e.value("mode", "") == mode) return e.value("type", def);
+        return def;
+    };
     SiteConfig& cfg = b.cfg;
     RenderOpts& opt = b.opt;
     std::vector<Page>& pages = b.pages;
@@ -1231,8 +1311,8 @@ static void render_locales(BuildContext& b) {
             if (!ogImageUrl.empty()) hd["meta"]["names"].push_back(json{{"name", "twitter:image"}, {"content", ogImageUrl}});
             return hd;
         };
-        // 6) 首页（默认无左侧边栏：hero + 卡片居中，config.home 可配内容；isHome 标记页眉/移动端一致）
-        // 首页 → PageCtx（组件模式：hero/cards 数据由 Hero/CardGrid 组件渲染；fallback 由数据重建）
+        // 6) 首页（maps 注册表 mode=home；isHome 标记页眉/移动端一致；无左侧边栏）
+        // 首页 → PageCtx（hero/cards 数据由 Hero/Cards 组件渲染）
         {
             PageCtx ctx;
             ctx.is_home = true;
@@ -1256,7 +1336,7 @@ static void render_locales(BuildContext& b) {
                 ctx.head_links = hd.value("links", json::array());
                 ctx.jsonld = hd.value("jsonld", "");
             }
-            std::string landing = map_render_page(cfg, opt, ctx, "home", true);
+            std::string landing = map_render_page(cfg, opt, ctx, typeForMode("home", "home"), true);
             std::ofstream(locOut / "index.html")
                 << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(landing, dict)), locOut) : i18n_replace(landing, dict));
         }
@@ -1397,7 +1477,7 @@ static void render_locales(BuildContext& b) {
             ctx.jsonld = headDataStore[i].value("jsonld", "");
             ctx.curLocale = curLocale; ctx.lang_data = langData;
             ctx.i18nJson = i18nJson; ctx.relBase = relBase;
-            std::string page = map_render_page(cfg, opt, ctx, "doc");
+            std::string page = map_render_page(cfg, opt, ctx, typeForMode("pages", "doc"));
             fs::path pageOut = locOut / (pages[i].file + ".html");
             std::error_code pe2;
             fs::create_directories(pageOut.parent_path(), pe2);   // 子目录路由需建父目录
@@ -1519,7 +1599,7 @@ static void render_locales(BuildContext& b) {
                 ctx.body_end = (beIt2 != g_body_ends.end()) ? beIt2->second : "";
                 ctx.curLocale = curLocale; ctx.lang_data = langData;
                 ctx.i18nJson = i18nJson; ctx.relBase = "../";
-                std::string page = map_render_page(cfg, opt, ctx, "blog-post");
+                std::string page = map_render_page(cfg, opt, ctx, typeForMode("blog-post", "blog-post"));
                 std::ofstream(locOut / "blog" / (rel + ".html"))
                     << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
             }
@@ -1567,7 +1647,7 @@ static void render_locales(BuildContext& b) {
                 ctx.curLocale = curLocale; ctx.lang_data = langData;
                 ctx.i18nJson = i18nJson; ctx.relBase = relBase;
                 ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase);
-                std::string page = map_render_page(cfg, opt, ctx, "blog");
+                std::string page = map_render_page(cfg, opt, ctx, typeForMode("blog-list", "blog"));
                     if (pi == 0)
                         std::ofstream(locOut / "blog" / "index.html")
                             << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
@@ -1614,7 +1694,7 @@ static void render_locales(BuildContext& b) {
                 ctx.desc = cfg.description;
                 ctx.curLocale = curLocale; ctx.lang_data = langData;
                 ctx.i18nJson = i18nJson; ctx.relBase = "../";
-                std::string ov = map_render_page(cfg, opt, ctx, "tags");
+                std::string ov = map_render_page(cfg, opt, ctx, typeForMode("tags", "tags"));
                 std::ofstream(locOut / "tags" / "index.html")
                     << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, dict)), locOut) : i18n_replace(ov, dict));
                 for (auto& kv : tagMap) {
@@ -1636,23 +1716,29 @@ static void render_locales(BuildContext& b) {
                     tctx.desc = cfg.description;
                     tctx.curLocale = curLocale; tctx.lang_data = langData;
                     tctx.i18nJson = i18nJson; tctx.relBase = "../";
-                    std::string tp = map_render_page(cfg, opt, tctx, "tag-page");
+                    std::string tp = map_render_page(cfg, opt, tctx, typeForMode("tag-page", "tag-page"));
                     std::ofstream(locOut / "tags" / (slugify(kv.first) + ".html"))
                         << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(tp, dict)), locOut) : i18n_replace(tp, dict));
                 }
             }
         }
 
-        // 10) 自定义 404 页（每语言一份，文案走 i18n 字典）
-        {
+        // 10) single 通用单页（maps 注册表 mode=single：404 + 第三方自定义单页统一入口。
+        //     output 自定输出文件名（默认 <type>.html）；页面结构/内容由地图 + 地图 data + props 完全自定义）
+        for (const auto& e : maps) {
+            if (!e.is_object() || e.value("mode", "") != "single") continue;
+            std::string stype = e.value("type", "");
+            if (stype.empty()) continue;
+            std::string output = e.value("output", "");
+            if (output.empty()) output = stype + ".html";
             PageCtx ctx;
             ctx.nav_groups = nav_groups_json(cfg.nav, "", "");
-            ctx.title = "404";
+            ctx.title = (stype == "404") ? "404" : cfg.title;
             ctx.desc = cfg.description;
             ctx.curLocale = curLocale; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
-            std::string nfPage = map_render_page(cfg, opt, ctx, "404");
-            std::ofstream(locOut / "404.html")
-                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(nfPage, dict)), locOut) : i18n_replace(nfPage, dict));
+            std::string sp = map_render_page(cfg, opt, ctx, stype);
+            std::ofstream(locOut / output)
+                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(sp, dict)), locOut) : i18n_replace(sp, dict));
         }
 
         // 11) RSS / JSON Feed（行业标准，内建，无需 Node；博客文章并入订阅流）
@@ -2445,15 +2531,15 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
     // 4) 页面地图注册表（v2：C++ 构建时读此配置了解有哪些站点地图；地图本体在 theme/map/，JSON 约定）
     std::ofstream(dir / ".Cdocs/config/map.json")
         << "{\n"
-        << "  \"maps\": {\n"
-        << "    \"home\": \"map/home.json\",\n"
-        << "    \"doc\": \"map/doc.json\",\n"
-        << "    \"blog\": \"map/blog.json\",\n"
-        << "    \"blog-post\": \"map/blog-post.json\",\n"
-        << "    \"tags\": \"map/tags.json\",\n"
-        << "    \"tag-page\": \"map/tag-page.json\",\n"
-        << "    \"404\": \"map/404.json\"\n"
-        << "  },\n"
+        << "  \"maps\": [\n"
+        << "    { \"type\": \"home\", \"map\": \"map/home.json\", \"mode\": \"home\" },\n"
+        << "    { \"type\": \"doc\", \"map\": \"map/doc.json\", \"mode\": \"pages\" },\n"
+        << "    { \"type\": \"blog\", \"map\": \"map/blog.json\", \"mode\": \"blog-list\" },\n"
+        << "    { \"type\": \"blog-post\", \"map\": \"map/blog-post.json\", \"mode\": \"blog-post\" },\n"
+        << "    { \"type\": \"tags\", \"map\": \"map/tags.json\", \"mode\": \"tags\" },\n"
+        << "    { \"type\": \"tag-page\", \"map\": \"map/tag-page.json\", \"mode\": \"tag-page\" },\n"
+        << "    { \"type\": \"404\", \"map\": \"map/404.json\", \"mode\": \"single\", \"output\": \"404.html\" }\n"
+        << "  ],\n"
         << "  \"templates\": {\n"
         << "    \"base\": \"map/base.json\"\n"
         << "  }\n"
