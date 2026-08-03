@@ -1,37 +1,54 @@
       <div class="locale-switch" aria-label="{{localeLabel}}">
-{{slot}}      </div>
+        <span class="ls-current">{{header.lang_switch.current}}<svg viewBox="0 0 16 16" aria-hidden="true" class="ls-caret"><path fill="currentColor" d="M4 6l4 4 4-4z"/></svg></span>
+        <div class="ls-menu">
+{{slot}}        </div>
+      </div>
 <style>
-/* 语言切换器（多语言模式显示在顶栏右侧） */
+/* 语言切换器（多语言模式显示在顶栏右侧；下拉菜单，hover 展开，同版本下拉风格） */
 .locale-switch {
-  display: flex;
+  position: relative;
+  display: inline-flex;
+}
+.ls-current {
+  display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 3px 4px;
+  gap: 5px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--fg);
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-}
-.locale-switch .loc, .locale-switch a {
-  font-size: 13px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  text-decoration: none;
-  color: var(--muted);
-  line-height: 1;
+  cursor: pointer;
+  user-select: none;
   white-space: nowrap;
 }
-.locale-switch a:hover {
-  color: var(--fg);
-  background: var(--panel);
+.ls-caret {
+  width: 12px;
+  height: 12px;
+  opacity: .7;
 }
-/* 语言切换器前的地球图标由 style.css 的 .locale-switch::before 提供
-   （url() 相对主题资产目录，内嵌 style 无法承载） */
+.ls-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 140px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  display: none;
+  z-index: 50;
+}
+.locale-switch:hover .ls-menu,
+.locale-switch:focus-within .ls-menu {
+  display: block;
+}
+/* 移动端：语言切换收进抽屉（抽屉内同为下拉展开） */
 @media (max-width:560px) {
-  .locale-switch {
-    padding: 2px;
-  }
-  .locale-switch::before {
-    display: none;
+  .ls-current {
+    padding: 5px 8px;
   }
 }
 </style>

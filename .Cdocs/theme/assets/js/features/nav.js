@@ -130,20 +130,8 @@ export function initNav() {
     window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(apply, 150); });
   })();
 
-  // ---------------- 快捷键：/ 聚焦搜索框 + 搜索框 Ctrl K 徽标 ----------------
+  // ---------------- 快捷键：/ 聚焦搜索框（Ctrl K 徽标已移除，保留快捷键） ----------------
   const searchInput = document.getElementById('search');
-  if (searchInput) {
-    // 包一层 .search-wrap 并注入键帽徽标（⌘K / Ctrl K），点击徽标聚焦搜索框
-    const wrap = document.createElement('span');
-    wrap.className = 'search-wrap';
-    const kbd = document.createElement('kbd');
-    kbd.className = 'search-kbd';
-    kbd.textContent = /mac|iphone|ipad/i.test(navigator.platform || '') ? '⌘K' : 'Ctrl K';
-    kbd.addEventListener('click', function () { searchInput.focus(); });
-    searchInput.parentNode.insertBefore(wrap, searchInput);
-    wrap.appendChild(searchInput);
-    wrap.appendChild(kbd);
-  }
   document.addEventListener('keydown', function (e) {
     if (e.key === '/' && !/^(input|textarea|select)$/i.test(e.target.tagName) && !e.target.isContentEditable) {
       if (searchInput) { e.preventDefault(); searchInput.focus(); }

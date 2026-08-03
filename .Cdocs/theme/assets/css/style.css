@@ -269,8 +269,8 @@ body {
   margin-right: 2px;
   background: currentColor;
   opacity: .7;
-  -webkit-mask: url(../icons/language.svg) center / contain no-repeat;
-  mask: url(../icons/language.svg) center / contain no-repeat;
+  -webkit-mask: url(../icons/languages.svg) center / contain no-repeat;
+  mask: url(../icons/languages.svg) center / contain no-repeat;
 }
 
 /* 编辑此页：铅笔图标 */
@@ -304,7 +304,7 @@ body {
 }
 .search-ico {
   position: absolute;
-  left: 9px;
+  right: 9px;
   width: 15px;
   height: 15px;
   color: var(--muted);
