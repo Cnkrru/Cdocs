@@ -124,7 +124,8 @@
     },
     "analytics": {
       "vercel": true
-    }
+    },
+    "busuanzi": {}
   },
   "footer": {
     "text": "{{footerText}}"

@@ -230,11 +230,11 @@ static void validate_schema(const json& j, const json& site, const json& hdr,
         }
     };
     warn_unknown(j,   {"site", "head", "header", "center", "footer"}, "$");
-    warn_unknown(site, {"title", "description", "theme", "url", "ogImage", "editLink", "i18n",
+    warn_unknown(site, {"title", "description", "theme", "themeName", "url", "ogImage", "editLink", "i18n",
                         "themeVars", "customCss", "home", "feedback", "versions", "compress",
                         "jpegQuality", "plugins", "sidebar", "route"}, "site");
     warn_unknown(hdr, {"logo", "showSearch", "showThemeToggle", "github", "links", "nav"}, "head");
-    warn_unknown(ctr, {"plugins", "backToTop", "comments", "analytics"}, "center");
+    warn_unknown(ctr, {"plugins", "backToTop", "comments", "analytics", "busuanzi"}, "center");
     warn_unknown(ftr, {"text", "links"}, "footer");
     if (site.contains("compress") && !site["compress"].is_boolean())
         std::cerr << color::yellow("  [config] site.compress 应为布尔值（true/false）\n");

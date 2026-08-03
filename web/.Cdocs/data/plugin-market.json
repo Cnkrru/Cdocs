@@ -1,6 +1,12 @@
 {
   "plugin_market": [
     {
+      "name": "不蒜子统计",
+      "desc": "不蒜子访问统计（busuanzi.cc，免费）。on_config 注入页脚「站点统计」按钮 + 自定义浮层面板（站点 PV/UV + 本页 PV/UV 四项数据），样式复用主题变量自动适配明暗。",
+      "repo": "Cnkrru/Cdocs",
+      "folder": "web/.Cdocs/plugins/busuanzi"
+    },
+    {
       "name": "giscus 评论",
       "desc": "GitHub Discussions 驱动的评论系统。on_config 钩子注入正文末尾，支持自定义主题与明暗切换同步。",
       "repo": "Cnkrru/Cdocs",
