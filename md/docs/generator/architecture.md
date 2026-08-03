@@ -84,4 +84,120 @@ build.cmd → ① 编译 25 个 C++ 源（g++ -std=c++17）+ 3 个 vendor C 源�
 
 发布：`.Cdocs/tools/make_release.py` 生成 `release/`（exe + 引擎资源，排除编译中间产物），加入 PATH 即可全局使用。
 
-详细说明见项目根 `ARCHITECTURE.md`。
+---
+
+## 目录结构
+
+```text
+Cdocs/
+├── src/                            # ★ C++ 生成器源码（25 个模块，见上文模块表）
+│   ├── core.hpp/.cpp               # 共享类型、全局 extern、工具函数、信号处理（唯一底座）
+│   ├── main.cpp                    # 纯装配：include 全部头 + 定义全局 + main()
+│   └── <其余 23 个模块>.hpp/.cpp    # 领域 / 渲染 / 构建 / 脚手架 / 编排 / 诊断
+├── Cdocs.exe                       # 已编译生成器（MinGW-W64 静态链接，单文件 ~10MB）
+├── Cdocs-linux                     # Linux 版生成器（GitHub Actions 预编译，供 Vercel 云端直接运行）
+├── release/                        # ★ 发布包（make_release.py 生成，exe + .Cdocs，入 PATH 即全局可用）
+├── vercel.json                     # Vercel 部署配置（Cdocs deploy --setup 插件生成，必须留根目录）
+├── .github/workflows/              # 自动部署（deploy.yml / build-linux-binary.yml，插件生成）
+├── .gitattributes                  # 行尾规范化（*.sh/*.yml/*.py → LF，*.bat/*.cmd → CRLF）
+├── README.md / serve.bat           # 说明 / 双击预览启动器
+├── .Cdocs/                         # ★ 生成器引擎（配置 + 主题 + 插件 + 依赖收口）
+│   ├── config/                     # 站点配置
+│   │   ├── config.json             # 标题 / 主题(themeName) / 插件 / 页眉页脚 / i18n / SEO / 压缩 / 版本化 / 路由映射
+│   │   ├── map.json                # 页面地图注册表（type → theme/map/*.json）
+│   │   └── route/                  # ★ 分文件侧边栏（每个版本 / 博客区一份，如 docs.json / blog.json）
+│   ├── i18n/                       # i18n 字典（扁平 key → value）
+│   │   ├── zh-CN.json
+│   │   └── en.json
+│   ├── themes/                     # ★ 多主题仓库（一个主题 = 一个文件夹，见 reference/themes.md）
+│   │   ├── ink/                    #   默认主题（theme.json + map/ + components/ + assets/）
+│   │   ├── paper/                  #   纸质主题
+│   │   └── frost/                  #   玻璃拟态主题
+│   ├── plugins/                    # ★ 外部脚本插件（见 reference/plugins.md）
+│   │   ├── blog-query/ tags-query/ #   数据查询（on_data_query：博客流 / 标签聚合）
+│   │   ├── giscus/                 #   评论（on_config 注入）
+│   │   ├── github-pages/ vercel/   #   部署配置生成（setup 钩子）
+│   │   └── vercel-analytics/       #   统计（on_config 注入）
+│   ├── tools/                      # 构建脚本
+│   │   ├── build.cmd               # Windows 一键构建（编译生成器 → Cdocs.exe build）
+│   │   ├── build.sh                # Linux / macOS 对应脚本
+│   │   └── make_release.py         # 生成 release/ 发布包
+│   └── deps/                       # ★ 第三方依赖统一收口
+│       ├── mermaid.min.js / katex.* / auto-render.min.js   # 图 / 公式（运行时）
+│       ├── highlight.min.js / highlight-theme.css          # 语法高亮（运行时）
+│       ├── flexsearch.bundle.min.js                        # 客户端全文搜索（运行时）
+│       ├── photoswipe*.min.js / photoswipe.min.css         # 图片灯箱（运行时懒加载）
+│       ├── fonts/                  # KaTeX 字体（随 katex.min.css）
+│       └── vendor/                 # 编译期 C/C++ 头文件（不随站点发布）
+│           ├── md4c/               # Markdown 解析（C 源，用 gcc 编译）
+│           └── nlohmann/json.hpp   # JSON 解析（C++ 头文件）
+├── md/                             # ★ Markdown 源根（唯一内容根）
+│   ├── docs/                       # 当前版本文档（中英 2 语言，按主题分子目录）
+│   ├── docs-v1/                    # 历史版本快照（可选；多版本时存在）
+│   ├── blog/                       # 博客流（可选；md/blog/ 存在即自动收集为博客）
+│   └── static/                     # 内容静态资源（图片等，随构建拷入 dist）
+├── .build/                         # 编译中间产物（.o 目标文件 + tmp/ 临时目录）· 非源码
+└── dist/                           # ★ 构建产物（部署用，见参考；默认开启压缩）
+```
+
+> **依赖统一收口原则**：所有第三方依赖都放进 `.Cdocs/deps/`。
+> - **运行时依赖**（mermaid / katex / highlight / flexsearch / photoswipe / fonts）：由生成器整目录拷贝进 `dist/assets/deps/`，离线可用。
+> - **编译期依赖**（`vendor/` 下的 md4c / nlohmann）：只参与 C++ 编译，**不**随站点发布（生成器拷贝 deps 时跳过 `vendor/`）。
+>
+> **主题收口原则**：主题 = `themes/<name>/` 整个文件夹（theme.json 元数据 + map 骨架 + components 组件 + assets 资源），复制文件夹 + 改 `themeName` 即换主题。
+>
+> **查询插件化原则**：博客流排序 / 分页 / 首页文章流、标签聚合等**数据查询逻辑 100% 在 Python 插件**（`on_data_query` 钩子）实现，引擎只产数据快照、不内置任何查询——改脚本即可自定义查询行为。
+
+---
+
+## 第三方依赖
+
+| 依赖 | 版本 | 用途 | 引入方式 |
+|------|------|------|----------|
+| md4c | — | Markdown 解析（C） | 随生成器编译（`.Cdocs/deps/vendor/md4c`，gcc） |
+| nlohmann/json | — | 配置 / 导航 JSON 解析（C++） | 头文件（`.Cdocs/deps/vendor/nlohmann/json.hpp`） |
+| highlight.js | 11.9.0 | 语法高亮 | `.Cdocs/deps/highlight.min.js`（客户端） |
+| FlexSearch | 0.7.43 | 客户端全文搜索 | `.Cdocs/deps/flexsearch.bundle.min.js` |
+| Mermaid | 10.9.1 | 流程图 / 时序图 | `.Cdocs/deps/mermaid.min.js`（懒加载） |
+| KaTeX | 0.16.9 | 数学公式 | `.Cdocs/deps/katex.min.js` + `auto-render.min.js` + 字体（懒加载） |
+
+> 所有**前端运行时库**均置于 `.Cdocs/deps/`，由生成器整目录递归拷贝进 `dist/assets/deps/`，**离线可用**。Mermaid 仅在含图表的页面加载，KaTeX 仅在含 `$` 的页面加载（懒加载）。**生成器本身零运行时依赖**：RSS / Feed / PWA / SEO 全部 C++ 内建，构建过程不需要 Node / Python。
+
+---
+
+## 关键技术决策与约束
+
+1. **单文件 CLI + 零运行时依赖**：`Cdocs.exe` 静态链接（`-static`），RSS / JSON Feed / PWA / SEO / 搜索索引全部内建，构建链只有「编译生成器 → 运行生成器」两步，无 Node 脚本。`serve` 内置 C++ HTTP 服务器（无需 Python/Node）。
+
+2. **模块化兼容硬注入**：生成器硬编码注入 `<script src="assets/js/app.js">`（classic script）。故 `app.js` 退化为引导文件，用**动态 `import()`** 加载 ESM 模块图——既满足模块化编程，又无需改生成器。
+
+3. **数据驱动优先**：站点外观与结构尽量用 `.Cdocs/config/config.json` / `.Cdocs/config/route/` / `.Cdocs/i18n/` 表达，升级渲染内核（md4c、highlight.js 等）即可获得新能力，无需改业务代码。
+
+4. **SEO / 多语言在构建时落地**：JSON-LD、canonical、sitemap `hreflang`、各语言 `search.json` 均由生成器在构建时产出，保证静态站点对爬虫友好。
+
+5. **引擎隐藏目录化（Hugo 式）**：源码、配置、i18n、主题、插件、前端资源、构建脚本、第三方依赖全部收口在 `.Cdocs/`，用户侧只维护 `md/`（内容）与 `dist/`（产物）——使用路径对齐 Hugo 心智模型。
+
+6. **查询 100% 插件化**：引擎不内置任何数据查询（博客流 / 标签聚合），全部由 Python 插件通过 `on_data_query` 钩子实现。插件协议 = 外部进程 + JSON 文件交换，失败自动隔离、永不阻断构建。
+
+7. **主题 = 文件夹**：页面结构（map JSON）、组件（components）、资源（assets）全在一个文件夹内，换主题 = 换文件夹 + 改 `themeName`；机制组件缺失时从默认主题回退共享。
+
+8. **草稿与生命周期**：front matter 的 `draft: true` 默认不发布，`build -D/--drafts` 强制包含（feeds / sitemap / 导航同步过滤）；`init` = 建站、`new` = 建页、`section` = 加内容区、`clean` = 清空产物，与 Hugo/Jekyll 语义一致。
+
+---
+
+## 如何扩展
+
+| 想加什么 | 改哪里 |
+|----------|--------|
+| 新页面 / 新内容 | 在 `md/docs/` 加 `.md`（`Cdocs new <名>` 自动登记），或在 `.Cdocs/config/route/` 挂导航 |
+| 改站点配置 / 外观 | 改 `.Cdocs/config/config.json`（标题、主题、页眉页脚、插件、主题变量、`home` 首页 hero/卡片白名单、`header.nav` 页眉右侧导航） |
+| 换主题 | 在 `.Cdocs/config/config.json` 改 `site.themeName`（`themes/` 下选 ink / paper / frost） |
+| 新增一种语言 | 在 `.Cdocs/i18n/` 加字典 + `config.i18n.locales` 登记 + `md/docs/` 加对应 `.md` |
+| 自定义博客流 / 标签查询 | 改 `.Cdocs/plugins/blog-query/scripts/blog_query.py` 或 `tags_query.py`（每页条数、排序、首页条数） |
+| 新交互功能 | 在 `themes/<name>/assets/js/features/` 加 `initX()` 模块，在 `main.js` 挂一行 |
+| 新正文短代码 | 在 `themes/<name>/components/shortcodes/` 写 `<Name>.html`（见 [shortcode 参考](../reference/shortcodes)） |
+| 新页面类型 | 在 `.Cdocs/config/map.json` 的 `maps` 数组加一项 `{type, map}`，再写 `theme/map/<type>.json` |
+| 改生成器逻辑 | 改 `src/` 对应模块（core 底座 / 领域模块 / cli / builder），重跑 `build.cmd` |
+| 新构建产物 | 在 `builder.cpp` 的 `run_build` 阶段链里加一个阶段函数（BuildContext 已备好共享状态） |
+| 升级渲染内核 | 替换 `.Cdocs/deps/` 中的对应库（运行时库直接换；md4c 替换 `.Cdocs/deps/vendor/md4c` 后重编） |
+
