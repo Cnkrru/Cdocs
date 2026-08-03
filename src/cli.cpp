@@ -1,265 +1,292 @@
-// cli.cpp —— 全局旗标解析与子命令分发（纯代码搬迁自原 main.cpp）
+// cli.cpp —— 命令分发（表驱动）+ 统一 flag 解析
+// v2：命令注册表 {name, 别名, usage, 摘要, 处理器}，新增 doctor/check/config/routes 诊断命令
 
 #include "cli.hpp"
 #include "builder.hpp"
 #include "server.hpp"
 #include "deploy.hpp"
+#include "scaffold.hpp"
+#include "diag.hpp"
+#include <map>
+
+// ---------- 无值（布尔）flag 白名单 ----------
+static bool is_bool_flag(const std::string& f) {
+    static const std::set<std::string> bools = {
+        "-D", "--drafts", "--clean", "-q", "--quiet", "-V", "--verbose",
+        "-o", "--open", "-w", "--watch", "--no-build",
+        "-f", "--force", "--vercel", "--setup",
+        "-y", "--defaults", "--no-engine",
+        "-h", "--help", "-v", "--version",
+    };
+    return bools.count(f) > 0;
+}
+
+// ---------- 统一 flag 解析 ----------
+// 规则：--flag value（下一参数非 '-' 开头则视为值）；布尔 flag 白名单内始终无值；
+// "--" 之后全部视为位置参数。未知 flag 不在此层报错（由命令决定是否检查）。
+struct ParsedArgs {
+    std::map<std::string, std::string> flags;  // "--flag" → 值（布尔 flag 为空串）
+    std::vector<std::string> pos;              // 裸参数
+    size_t stopIndex = 0;                      // stopAtFirstPos 时停止处的索引
+};
+
+static ParsedArgs parse_flags(const std::vector<std::string>& args, size_t from,
+                              bool stopAtFirstPos = false) {
+    ParsedArgs r;
+    bool posOnly = false;
+    for (size_t i = from; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        if (posOnly || a.empty() || a[0] != '-') {
+            r.pos.push_back(a);
+            if (stopAtFirstPos) { r.stopIndex = i; break; }   // 命令名即停（子命令 flag 留给 handler）
+            continue;
+        }
+        if (a == "--") { posOnly = true; continue; }
+        if (!is_bool_flag(a) && i + 1 < args.size() && !args[i + 1].empty() && args[i + 1][0] != '-')
+            r.flags[a] = args[++i];
+        else
+            r.flags[a] = "";
+    }
+    return r;
+}
+
+static void apply_global_flags(const ParsedArgs& p) {
+    for (const auto& [k, v] : p.flags) {
+        if (k == "-c" || k == "--config") g_engine = v;
+        else if (k == "-s" || k == "--source") g_source = v;
+        else if (k == "-d" || k == "--dest") g_dest = v;
+        else if (k == "-q" || k == "--quiet") g_quiet = true;
+        else if (k == "-V" || k == "--verbose") g_verbose = true;
+    }
+}
 
 void print_version() {
     std::cout << color::cyan("Cdocs") << " " << color::green(CDOCS_VERSION) << "\n";
 }
 
+// ---------- 命令注册表 ----------
+struct Command {
+    const char* name;
+    const char* alias;       // 空格分隔别名，"" 表示无
+    const char* usage;       // 参数行（不含命令名）
+    const char* brief;       // 一句话说明
+    int (*fn)(const std::vector<std::string>& args);
+};
+
+static const Command kCommands[] = {
+    { "init",    "",      "<目录> [--no-engine] [--defaults]",   "新建完整站点骨架并自动构建", nullptr },
+    { "new",     "add page", "<页面名>",                         "新建一篇文档并登记导航",     nullptr },
+    { "section", "",      "<blog|docs|md-v<n>>",                 "添加内容区（分类）",         nullptr },
+    { "build",   "",      "[-D] [--clean] [源] [目标]",          "构建站点（md → dist）",      nullptr },
+    { "serve",   "",      "[-p 端口] [-o] [-w] [--no-build]",    "构建并启动本地预览服务器",   nullptr },
+    { "deploy",  "",      "[--remote <url>] [--branch <b>] [-m <msg>] [--force] [--vercel] [--setup]",
+                                                               "构建并发布（gh-pages / Vercel）", nullptr },
+    { "clean",   "",      "",                                     "清空输出目录（dist）",      nullptr },
+    { "doctor",  "",      "",                                     "环境与配置自检",            nullptr },
+    { "check",   "",      "",                                     "站点质量检查（死链/token/数据孔）", nullptr },
+    { "config",  "",      "",                                     "打印解析后的配置摘要",      nullptr },
+    { "routes",  "",      "",                                     "列出站点页面路由清单",      nullptr },
+    { "version", "",      "",                                     "显示版本号",                nullptr },
+    { "help",    "h",     "[命令]",                               "显示帮助（可指定命令）",    nullptr },
+};
+static const int kCmdCount = (int)(sizeof(kCommands) / sizeof(kCommands[0]));
+
+static const Command* find_command(const std::string& name) {
+    for (const auto& c : kCommands) {
+        if (name == c.name) return &c;
+        if (c.alias[0]) {
+            std::string al = c.alias;
+            size_t start = 0;
+            while (start <= al.size()) {
+                size_t sp = al.find(' ', start);
+                std::string tok = al.substr(start, sp == std::string::npos ? std::string::npos : sp - start);
+                if (tok == name) return &c;
+                if (sp == std::string::npos) break;
+                start = sp + 1;
+            }
+        }
+    }
+    return nullptr;
+}
+
+// ---------- 子命令帮助 ----------
+static void print_subcommand_help(const Command& c) {
+    using namespace color;
+    std::cout << bold(green("Cdocs ")) << bold(green(c.name));
+    if (c.alias[0]) std::cout << muted("（别名: ") << c.alias << muted("）");
+    std::cout << " " << yellow(c.usage) << "\n"
+              << "  " << muted(c.brief) << "\n"
+              << "  " << muted("详见 ") << cyan("Cdocs help " + std::string(c.name)) << muted("。\n");
+}
+
+// ---------- 各命令处理器 ----------
+static int h_init(const std::vector<std::string>& args) {
+    auto p = parse_flags(args, 1);
+    if (p.pos.empty()) {
+        std::cerr << color::error("用法: Cdocs init <目录> [--no-engine] [--defaults]\n");
+        return 2;
+    }
+    bool noEngine = p.flags.count("--no-engine") > 0;
+    bool defs = p.flags.count("--defaults") > 0 || p.flags.count("-y") > 0;
+    return cmd_init(p.pos[0], !noEngine, defs);
+}
+
+static int h_new(const std::vector<std::string>& args) {
+    auto p = parse_flags(args, 1);
+    if (p.pos.empty()) {
+        std::cerr << color::error("用法: Cdocs new <页面名>\n");
+        return 2;
+    }
+    return cmd_add(p.pos[0]);
+}
+
+static int h_section(const std::vector<std::string>& args) {
+    auto p = parse_flags(args, 1);
+    if (p.pos.empty()) {
+        std::cerr << color::error("用法: Cdocs section <blog|docs|md-v<数字>>\n");
+        return 2;
+    }
+    return cmd_section(p.pos[0]);
+}
+
+static int h_build(const std::vector<std::string>& args) {
+    auto p = parse_flags(args, 1);
+    apply_global_flags(p);
+    bool drafts = p.flags.count("-D") > 0 || p.flags.count("--drafts") > 0;
+    bool clean = p.flags.count("--clean") > 0;
+    if (!p.pos.empty()) g_source = p.pos[0];
+    if (p.pos.size() > 1) g_dest = p.pos[1];
+    return run_build(g_source, g_dest, drafts, clean);
+}
+
+static int h_serve(const std::vector<std::string>& args) {
+    auto p = parse_flags(args, 1);
+    apply_global_flags(p);
+    int port = 8088;
+    auto it = p.flags.find("--port");
+    if (it == p.flags.end()) it = p.flags.find("-p");
+    if (it != p.flags.end() && !it->second.empty()) port = std::atoi(it->second.c_str());
+    bool build = p.flags.count("--no-build") == 0;
+    bool watch = p.flags.count("-w") > 0 || p.flags.count("--watch") > 0;
+    bool open = p.flags.count("-o") > 0 || p.flags.count("--open") > 0;
+    return cmd_serve(g_dest, g_source, port, build, watch, open);
+}
+
+static int h_deploy(const std::vector<std::string>& args) {
+    auto p = parse_flags(args, 1);
+    apply_global_flags(p);
+    if (p.flags.count("--setup") > 0) return cmd_deploy_setup(g_source);
+    std::string remote = p.flags.count("--remote") ? p.flags["--remote"] : "";
+    std::string branch = p.flags.count("--branch") ? p.flags["--branch"] : "";
+    std::string msg = p.flags.count("-m") ? p.flags["-m"]
+                     : (p.flags.count("--message") ? p.flags["--message"] : "");
+    bool force = p.flags.count("-f") > 0 || p.flags.count("--force") > 0;
+    bool vercel = p.flags.count("--vercel") > 0;
+    return cmd_deploy(g_source, g_dest, remote, branch, msg, force, vercel);
+}
+
+static int h_clean(const std::vector<std::string>& args) {
+    (void)args;
+    return cmd_clean();
+}
+
+static int h_version(const std::vector<std::string>& args) {
+    (void)args;
+    print_version();
+    return 0;
+}
+
+static int h_help(const std::vector<std::string>& args);
+
+// ---------- 总帮助（表驱动） ----------
 void print_help() {
     using namespace color;
     std::cout
       << bold(cyan("Cdocs ")) << bold(CDOCS_VERSION)
       << muted(" — 静态文档站生成器 (C++)\n\n")
-      << bold("用法:") << "\n"
+      << bold("用法: ") << "\n"
       << "  " << cyan("Cdocs") << " [全局旗标] <命令> [参数]\n\n"
-      << bold("命令:") << "\n"
-      << "  " << green("init")  << muted(" <目录> [--no-engine] [--defaults]") << " 新建站点骨架（交互选择内容区/版本）\n"
-      << "  " << green("new")   << muted(" <页面名> [别名 add/page] ") << "新建一篇文档并登记导航\n"
-      << "  " << green("section")<< muted(" <blog|md|md-v<n>>") << " 添加内容区（blog 唯一、md 唯一、版本可多个）\n"
-      << "  " << green("build")  << muted(" [-D] [--clean] [源] [目标]") << " 构建站点（默认 md → dist）\n"
-      << "  " << green("serve")  << muted(" [-p 端口] [-w] [-o]      ") << "构建并启动本地预览服务器\n"
-      << "  " << green("deploy") << muted(" [--remote <url>] [--branch <b>] [-m <msg>] [--vercel]") << " 构建并发布\n"
-      << "  " << green("clean")  << muted("                       ") << "清空输出目录（dist）\n"
-      << "  " << green("version")<< muted("                       ") << "显示版本号\n"
-      << "  " << green("help")   << muted("                       ") << "显示本帮助\n\n"
-      << bold("全局旗标（放在子命令前）:") << "\n"
+      << bold("命令:") << "\n";
+    for (const auto& c : kCommands) {
+        std::string left = std::string("  ") + green(c.name);
+        if (c.alias[0]) left += muted(" (") + std::string(c.alias) + muted(")");
+        if (left.size() < 24) left.append(24 - left.size(), ' ');
+        std::cout << left << muted(c.brief) << "\n";
+    }
+    std::cout << "\n"
+      << bold("全局旗标（放在命令前）:") << "\n"
       << "  " << yellow("-c, --config <目录>") << "  引擎/配置根目录（默认 .Cdocs）\n"
       << "  " << yellow("-s, --source <目录>") << "  Markdown 源目录（默认 md）\n"
-      << "  " << yellow("-d, --dest <目录>  ") << "  输出目录（默认 dist，serve 也用它作预览根）\n"
+      << "  " << yellow("-d, --dest <目录>  ") << "  输出目录（默认 dist）\n"
       << "  " << yellow("-q, --quiet")        << "        静默输出\n"
       << "  " << yellow("-V, --verbose")      << "        详细输出\n"
       << "  " << yellow("-h, --help")         << "        显示本帮助\n"
       << "  " << yellow("-v, --version")      << "      显示版本号\n\n"
-      << bold("子命令旗标:") << "\n"
-      << "  " << yellow("build -D, --drafts") << "    包含草稿页（默认排除）\n"
-      << "  " << yellow("build --clean")      << "        构建前清空输出目录\n"
-      << "  " << yellow("serve -p, --port <n>") << "  指定端口（默认 8088）\n"
-      << "  " << yellow("serve -w, --watch")  << "      文件改动时自动重建\n"
-      << "  " << yellow("serve -o, --open")   << "      启动后自动打开浏览器\n"
-      << "  " << yellow("serve --no-build")   << "      跳过构建，直接预览现有 dist\n"
-      << "  " << yellow("init --no-engine")   << "      仅生成内容骨架，不复制 Cdocs.exe\n"
-      << "  " << yellow("init --defaults")    << "      跳过交互询问（默认：文档+博客，不带版本）\n"
-      << "  " << yellow("section <名>")       << "      内容区名：blog / docs / md-v<数字>（如 md-v1）\n"
-      << "  " << yellow("deploy --remote <url>") << "  指定远端仓库（否则读 config site.deploy.remote）\n"
-      << "  " << yellow("deploy --branch <b>") << "   目标分支（默认 gh-pages）\n"
-      << "  " << yellow("deploy -m <msg>")    << "      提交信息（默认 \"Deploy Cdocs site\"）\n"
-      << "  " << yellow("deploy --force")     << "      构建前清空输出目录\n"
-      << "  " << yellow("deploy --vercel")    << "      发布到 Vercel（构建后调 vercel CLI，需先 vercel login）\n"
-      << "  " << yellow("deploy --setup")     << "      生成自动化部署配置（插件驱动：.github/workflows + vercel.json）\n\n"
       << bold("示例:") << "\n"
-      << "  " << cyan("Cdocs init mysite") << muted("            # 新建站点（自动构建）") << "\n"
-      << "  " << cyan("Cdocs new my-page") << muted("           # 新建文档并登记导航") << "\n"
-      << "  " << cyan("Cdocs build") << muted("                  # md → dist") << "\n"
-      << "  " << cyan("Cdocs build -D --clean") << muted("      # 含草稿并先清空") << "\n"
-      << "  " << cyan("Cdocs serve -o -w -p 3000") << muted(" # 开浏览器+热重载+指定端口") << "\n"
-      << "  " << cyan("Cdocs deploy") << muted("               # 构建并推送 gh-pages") << "\n"
-      << "  " << cyan("Cdocs deploy --vercel") << muted("      # 构建并发布到 Vercel 生产环境") << "\n"
-      << "  " << cyan("Cdocs deploy --remote https://github.com/u/r.git") << muted("  # 指定远端") << "\n"
-      << "  " << cyan("Cdocs clean") << muted("                  # 清空 dist\n\n")
-      << muted("无参数运行打印本帮助并退出；双击 exe 无参数会等待 Ctrl+C 退出（防窗口一闪而过）。\n")
-      << muted("配置: .Cdocs/config/config.json + route.json\n");
+      << "  " << cyan("Cdocs init mysite")       << muted("   # 新建站点") << "\n"
+      << "  " << cyan("Cdocs new my-page")       << muted("   # 新建文档") << "\n"
+      << "  " << cyan("Cdocs build --clean")     << muted(" # 构建") << "\n"
+      << "  " << cyan("Cdocs serve -o -w")       << muted("  # 预览+热重载") << "\n"
+      << "  " << cyan("Cdocs doctor")            << muted("    # 环境自检") << "\n"
+      << "  " << cyan("Cdocs check")             << muted("     # 质量检查") << "\n"
+      << "  " << cyan("Cdocs help build")        << muted("  # 子命令帮助") << "\n\n"
+      << muted("无参数运行打印本帮助并退出。配置: .Cdocs/config/config.json + map.json + sidebar/\n");
 }
 
-void print_subcommand_help(const std::string& cmd) {
-    using namespace color;
-    if (cmd == "build") {
-        std::cout << bold(green("Cdocs build")) << " [" << yellow("-D/--drafts") << "] ["
-                  << yellow("--clean") << "] [" << yellow("-q/-V") << "] [源] [目标]\n"
-                  << muted("  构建静态站点。默认源=md，目标=dist；可用全局 -s/-d 覆盖。\n")
-                  << muted("  -D/--drafts  包含草稿页（默认排除）\n")
-                  << muted("  --clean      构建前清空目标目录\n");
-    } else if (cmd == "serve") {
-        std::cout << bold(green("Cdocs serve")) << " [" << yellow("-p/--port <n>") << "] ["
-                  << yellow("-o/--open") << "] [" << yellow("-w/--watch") << "] ["
-                  << yellow("--no-build") << "]\n"
-                  << muted("  构建并启动本地预览服务器（常驻，Ctrl+C 退出）。默认端口 8088。\n")
-                  << muted("  -w/--watch   监听 md/ 与配置，改动自动重建\n");
-    } else if (cmd == "init") {
-        std::cout << bold(green("Cdocs init")) << " <目录> [" << yellow("--no-engine") << "] ["
-                  << yellow("--defaults") << "]\n"
-                  << muted("  新建完整站点骨架（config/sidebar/i18n/示例内容/前端资源），并自动构建。\n")
-                  << muted("  交互询问内容区（仅文档 / 仅博客 / 文档+博客）与是否带历史版本（md-v1/）。\n")
-                  << muted("  --defaults 跳过询问（默认 文档+博客、不带版本）。\n");
-    } else if (cmd == "section") {
-        std::cout << bold(green("Cdocs section")) << " <" << yellow("blog|md|md-v<数字>") << ">\n"
-                  << muted("  添加内容区（分类）文件夹。合法名字：blog / docs / md-v<数字>（如 md-v1）。\n")
-                  << muted("  blog 与 md 只能各存在一份（已存在则拒绝）；版本目录可添加多个。\n")
-                  << muted("  自动创建目录/示例并同步 config.json 的 site.sidebar 映射。\n");
-    } else if (cmd == "clean") {
-        std::cout << bold(green("Cdocs clean")) << "\n"
-                  << muted("  清空输出目录（默认 dist）。对标 jekyll clean / docusaurus clear。\n");
-    } else if (cmd == "deploy") {
-        std::cout << bold(green("Cdocs deploy")) << " [" << yellow("--remote <url>") << "] ["
-                  << yellow("--branch <b>") << "] [" << yellow("-m <msg>") << "] ["
-                  << yellow("--force") << "] [" << yellow("--vercel") << "] ["
-                  << yellow("--setup") << "]\n"
-                  << muted("  构建站点并发布。三种模式：\n")
-                  << muted("    （默认）推送到远端分支（gh-pages），对标 mkdocs gh-deploy；\n")
-                  << muted("      远端解析：--remote > config site.deploy.remote > 已有 origin > site.url 推断。\n")
-                  << muted("    --vercel  发布到 Vercel 生产环境（构建后调 vercel CLI：vercel --prod --yes dist）。\n")
-                  << muted("      依赖 Node + vercel CLI：npm i -g vercel && vercel login（首次）。\n")
-                  << muted("    --setup   生成自动化部署配置文件（插件驱动，不构建）：\n")
-                  << muted("      扫描 .Cdocs/plugins/ 下声明 setup 钩子的部署插件（github-pages / vercel），\n")
-                  << muted("      生成 .github/workflows/*.yml 与 vercel.json 到项目根，提交 git 后 push 即自动部署。\n")
-                  << muted("  --force  构建前清空输出目录（默认仅首次部署清空，保留部署历史）。\n");
-    } else if (cmd == "new" || cmd == "add" || cmd == "page") {
-        std::cout << bold(green("Cdocs new")) << " <页面名>\n"
-                  << muted("  新建内容页（从 archetypes/default.md），并登记到 route.json 导航。\n");
-    } else {
-        print_help();
+static int h_help(const std::vector<std::string>& args) {
+    auto p = parse_flags(args, 1);
+    if (p.pos.empty()) { print_help(); return 0; }
+    const Command* c = find_command(p.pos[0]);
+    if (!c) {
+        std::cerr << color::error("未知命令 '") << p.pos[0] << color::error("'。\n");
+        return 2;
     }
+    print_subcommand_help(*c);
+    return 0;
 }
 
-// 解析子命令之前的全局旗标（对标 Hugo/MkDocs：全局旗标放在子命令前）。
-// earlyExit >= 0 表示已处理并应直接退出（help/version/用法错误）；否则返回剩余参数。
-std::vector<std::string> parse_global_flags(std::vector<std::string>& args, int& earlyExit) {
-    earlyExit = -1;
-    auto need_val = [&](size_t& i, const std::string& flag) -> std::string {
-        if (i + 1 >= args.size()) {
-            std::cerr << color::error("错误: ") << flag << color::error(" 需要一个参数\n");
-            earlyExit = 2; return "";
-        }
-        return args[++i];
-    };
-    size_t i = 0;
-    while (i < args.size()) {
-        const std::string& a = args[i];
-        if (a.empty() || a[0] != '-') break;            // 遇到子命令，停止
-        if (a == "--") { ++i; break; }                  // 显式结束全局旗标
-        if (a == "-c" || a == "--config")        g_engine = need_val(i, a);
-        else if (a == "-s" || a == "--source")   g_source = need_val(i, a);
-        else if (a == "-d" || a == "--dest")     g_dest   = need_val(i, a);
-        else if (a == "-q" || a == "--quiet")    g_quiet  = true;
-        else if (a == "-V" || a == "--verbose")  g_verbose = true;
-        else if (a == "-h" || a == "--help")     { print_help();    earlyExit = 0; }
-        else if (a == "-v" || a == "--version")  { print_version(); earlyExit = 0; }
-        else {
-            std::cerr << color::error("错误: 未知全局旗标 '") << a
-                      << color::error("'（见 ") << color::cyan("Cdocs -h") << color::error("）\n");
-            earlyExit = 2;
-        }
-        ++i;
-        if (earlyExit >= 0) break;
-    }
-    return std::vector<std::string>(args.begin() + i, args.end());
-}
-
-// 执行单条命令。args[0] 为命令名。
-// 退出码：0=成功，1=运行错误，2=用法错误（未知命令 / 缺参数 / 未知旗标）。
+// ---------- 命令分发 ----------
+// 退出码：0=成功，1=运行错误，2=用法错误（未知命令/缺参数/未知旗标）
 int run_command(std::vector<std::string> args) {
-    std::string cmd = args[0];
+    // 全局旗标解析（到第一个非 '-' 参数 = 命令名）
+    // 全局旗标解析：遇第一个位置参数（命令名）即停，子命令 flag 原样留给 handler
+    ParsedArgs g = parse_flags(args, 0, /*stopAtFirstPos=*/true);
+    apply_global_flags(g);
+    if (g.flags.count("-h") > 0 || g.flags.count("--help") > 0) { print_help(); return 0; }
+    if (g.flags.count("-v") > 0 || g.flags.count("--version") > 0) { print_version(); return 0; }
+    if (g.pos.empty()) { print_help(); return 0; }
 
-    if (cmd == "-h" || cmd == "--help" || cmd == "help")       { print_help();    return 0; }
-    if (cmd == "-v" || cmd == "--version" || cmd == "version") { print_version(); return 0; }
-
-    // init <目录> [--no-engine]：新建完整站点骨架（含引擎资源与 Cdocs.exe）
-    if (cmd == "init") {
-        if (args.size() < 2) {
-            std::cerr << color::error("用法: Cdocs [-c <引擎>] init <目录> [--no-engine] [--defaults]\n");
-            return 2;
-        }
-        bool noEngine = false, useDefaults = false;
-        for (size_t i = 2; i < args.size(); ++i) {
-            if (args[i] == "--no-engine") noEngine = true;
-            else if (args[i] == "--defaults" || args[i] == "-y") useDefaults = true;
-        }
-        return cmd_init(args[1], !noEngine, useDefaults);
+    std::string cmd = g.pos[0];
+    std::vector<std::string> cmdArgs(args.begin() + g.stopIndex, args.end());
+    const Command* c = find_command(cmd);
+    if (!c) {
+        std::cerr << color::error("错误: 未知命令 '") << cmd << color::error("'。\n")
+                  << color::muted("可用命令：") << color::cyan("help")
+                  << color::muted("（列出全部，或 ") << color::cyan("Cdocs help <命令>")
+                  << color::muted(" 查看单个命令）。\n");
+        return 2;
     }
 
-    // section <blog|md|md-v<n>>：添加内容区（分类），名字受限制、blog/md 唯一
-    if (cmd == "section") {
-        if (args.size() < 2) {
-            std::cerr << color::error("用法: Cdocs section <blog|md|md-v<数字>>\n")
-                      << color::muted("  例: Cdocs section blog / docs / md-v2\n");
-            return 2;
-        }
-        return cmd_section(args[1]);
+    // 命令内 -h/--help
+    ParsedArgs inner = parse_flags(cmdArgs, 1);
+    if (inner.flags.count("-h") > 0 || inner.flags.count("--help") > 0) {
+        print_subcommand_help(*c);
+        return 0;
     }
 
-    // new/add/page <页面名>：新建内容页（从 archetype），并登记导航
-    if (cmd == "new" || cmd == "add" || cmd == "page") {
-        if (args.size() < 2) {
-            std::cerr << color::error("用法: Cdocs new <页面名>\n");
-            return 2;
-        }
-        return cmd_add(args[1]);
-    }
-
-    // clean：清空输出目录（对标 jekyll clean / docusaurus clear）
-    if (cmd == "clean") {
-        if (args.size() >= 2 && (args[1] == "-h" || args[1] == "--help")) { print_subcommand_help("clean"); return 0; }
-        return cmd_clean();
-    }
-
-    // build [-D/--drafts] [--clean] [-q/-V] [源] [目标]：构建站点
-    if (cmd == "build") {
-        bool drafts = false, clean = false;
-        std::vector<std::string> pos;
-        for (size_t i = 1; i < args.size(); ++i) {
-            const std::string& a = args[i];
-            if (a == "-D" || a == "--drafts")          drafts = true;
-            else if (a == "--clean")                   clean = true;
-            else if (a == "-q" || a == "--quiet")      g_quiet = true;
-            else if (a == "-V" || a == "--verbose")    g_verbose = true;
-            else if (a == "-h" || a == "--help")       { print_subcommand_help("build"); return 0; }
-            else if (a.rfind("-", 0) == 0) {
-                std::cerr << color::error("错误: 未知 build 旗标 '") << a << color::error("'\n");
-                return 2;
-            } else pos.push_back(a);
-        }
-        if (!pos.empty()) g_source = pos[0];
-        if (pos.size() > 1) g_dest = pos[1];
-        return run_build(g_source, g_dest, drafts, clean);
-    }
-
-    // serve [-p/--port] [-o/--open] [-w/--watch] [--no-build]：构建并预览（常驻）
-    if (cmd == "serve") {
-        int port = 8088;
-        bool build = true, watch = false, open = false;
-        for (size_t i = 1; i < args.size(); ++i) {
-            const std::string& a = args[i];
-            if ((a == "-p" || a == "--port") && i + 1 < args.size())
-                port = std::atoi(args[++i].c_str());
-            else if (a == "-o" || a == "--open") open = true;
-            else if (a == "-w" || a == "--watch") watch = true;
-            else if (a == "--no-build")           build = false;
-            else if (a == "-h" || a == "--help")  { print_subcommand_help("serve"); return 0; }
-            else if (a.rfind("-", 0) == 0) {
-                std::cerr << color::error("错误: 未知 serve 旗标 '") << a << color::error("'\n");
-                return 2;
-            }
-        }
-        return cmd_serve(g_dest, g_source, port, build, watch, open);
-    }
-
-    // deploy [--remote <url>] [--branch <b>] [-m <msg>] [--force] [--vercel]：构建并发布
-    if (cmd == "deploy") {
-        std::string remote, branch, message;
-        bool force = false, toVercel = false;
-        for (size_t i = 1; i < args.size(); ++i) {
-            const std::string& a = args[i];
-            if ((a == "--remote") && i + 1 < args.size())         remote  = args[++i];
-            else if ((a == "--branch") && i + 1 < args.size())    branch  = args[++i];
-            else if ((a == "-m" || a == "--message") && i + 1 < args.size()) message = args[++i];
-            else if (a == "--force" || a == "-f")                 force   = true;
-            else if (a == "--vercel")                             toVercel = true;
-            else if (a == "--setup")                              return cmd_deploy_setup(g_source);
-            else if (a == "-h" || a == "--help")                  { print_subcommand_help("deploy"); return 0; }
-            else if (a.rfind("-", 0) == 0) {
-                std::cerr << color::error("错误: 未知 deploy 旗标 '") << a << color::error("'\n");
-                return 2;
-            }
-        }
-        return cmd_deploy(g_source, g_dest, remote, branch, message, force, toVercel);
-    }
-
-    // 严格 CLI：未知命令明确报错并退出（退出码 2 = 用法错误）
-    std::cerr << color::error("错误: 未知命令 '") << cmd << color::error("'。\n")
-              << color::muted("可用命令：") << color::cyan("init / new / add / build / serve / deploy / clean / -h / -v")
-              << color::muted("（详见 ") << color::cyan("Cdocs -h") << color::muted("）。\n");
-    return 2;
+    // 分发
+    if (cmd == "init")    return h_init(cmdArgs);
+    if (cmd == "new" || cmd == "add" || cmd == "page") return h_new(cmdArgs);
+    if (cmd == "section") return h_section(cmdArgs);
+    if (cmd == "build")   return h_build(cmdArgs);
+    if (cmd == "serve")   return h_serve(cmdArgs);
+    if (cmd == "deploy")  return h_deploy(cmdArgs);
+    if (cmd == "clean")   return h_clean(cmdArgs);
+    if (cmd == "doctor")  return cmd_doctor();
+    if (cmd == "check")   return cmd_check();
+    if (cmd == "config")  return cmd_config();
+    if (cmd == "routes")  return cmd_routes();
+    if (cmd == "version") return h_version(cmdArgs);
+    if (cmd == "help")    return h_help(cmdArgs);
+    return 2;  // unreachable
 }

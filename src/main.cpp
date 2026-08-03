@@ -52,15 +52,9 @@ int main(int argc, char** argv) {
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) args.push_back(argv[i]);
 
-    // 先解析子命令前的全局旗标（-c/-s/-d/-q/-V 等）
-    int early = -1;
-    std::vector<std::string> rest = parse_global_flags(args, early);
-    if (early >= 0) return early;
-
-    // 纯子命令 CLI（对标 Hugo / MkDocs）：无参数时打印帮助并退出。
-    // 双击 exe（父进程是 explorer）为避免窗口一闪而过，等待用户按 Ctrl+C 关闭
-    // （行业惯例：Ctrl+C 退出，不响应回车键）。
-    if (rest.empty()) {
+    // 无参数：打印帮助并退出；双击 exe（父进程是 explorer）为避免窗口一闪而过，
+    // 等待用户按 Ctrl+C 关闭（行业惯例：Ctrl+C 退出，不响应回车键）。
+    if (args.empty()) {
         print_help();
         if (launched_by_doubleclick()) {
             std::signal(SIGINT,  idle_signal_handler);
@@ -73,5 +67,6 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
-    return run_command(rest);
+    // 全局旗标（-c/-s/-d/-q/-V/-h/-v）与子命令分发统一在 run_command 内完成
+    return run_command(args);
 }
