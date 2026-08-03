@@ -80,6 +80,7 @@ json nav_groups_json(const std::vector<NavNode>& nodes, const std::string& curFi
 
 // 首页卡片 → json（landing 用）
 json cards_json(const SiteConfig& cfg, const std::vector<Page>& pages) {    std::vector<const Page*> shown;
+    if (!cfg.homeCardsEnabled) return nullptr;   // home.cards: false → 关闭卡片区（地图 if: cards 不渲染）
     if (!cfg.homeCards.empty()) {
         for (const auto& hc : cfg.homeCards) {
             const Page* found = nullptr;

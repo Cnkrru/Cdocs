@@ -158,6 +158,7 @@ struct SiteConfig {
     std::string homeTitle, homeSubtitle;   // hero 覆盖（空 = 回退 title/description）
     std::string homeCtaText, homeCtaFile;  // CTA 覆盖（空 = 第一篇文档 + {{getStarted}}）
     std::vector<HomeCardCfg> homeCards;
+    bool homeCardsEnabled = true;          // home.cards 显式 false = 关闭首页卡片区（只留 hero）
     std::string feedbackEndpoint;          // 反馈上报端点（config.feedback.endpoint，空 = 仅本地记忆）
     bool compress = true;                // 构建期压缩（config site.compress，默认开启：图片 + HTML/CSS）
     int  jpegQuality = 82;               // JPEG 重压质量（config site.jpegQuality，1-100）

@@ -154,7 +154,9 @@ static void parse_home_block(const json& site, SiteConfig& cfg) {
             if (c.contains("file")) cfg.homeCtaFile = c["file"].get<std::string>();
         }
     }
-    if (hm.contains("cards") && hm["cards"].is_array()) {
+    if (hm.contains("cards") && hm["cards"].is_boolean() && !hm["cards"].get<bool>()) {
+        cfg.homeCardsEnabled = false;   // home.cards: false → 关闭首页卡片区（只留 hero）
+    } else if (hm.contains("cards") && hm["cards"].is_array()) {
         for (auto& c : hm["cards"]) {
             if (!c.is_object() || !c.contains("file")) continue;
             HomeCardCfg card;
