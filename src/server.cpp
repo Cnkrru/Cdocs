@@ -212,10 +212,8 @@ static void handle_conn(sock_t c, fs::path root) {
 //   watch —— 轮询 docs/ 与 .Cdocs/config，变化即自动重新构建
 //   open  —— 启动后调用系统默认浏览器打开预览地址
 int cmd_serve(fs::path root, fs::path in, int port, bool build, bool watch, bool open) {
-    if (build) {
-        int rc = run_build(in, root, false, false);
-        if (rc != 0) return rc;
-    } else if (!fs::exists(root)) {
+    // 构建延后到服务器就绪（先出预览地址）后执行；--no-build 时要求产物已存在
+    if (!build && !fs::exists(root)) {
         std::cerr << color::error("预览目录不存在: ") << root
                   << color::error("（先 build，或去掉 --no-build）\n");
         return 1;
@@ -274,7 +272,19 @@ int cmd_serve(fs::path root, fs::path in, int port, bool build, bool watch, bool
               << color::muted("  根目录: ") << root << "\n"
               << (watch ? color::muted("  热重载: 开（改动 docs/ 或 .Cdocs/config 自动重建）\n")
                         : color::muted("  "))
-              << color::muted("  按 Ctrl+C 停止（仅人工可退出）。\n\n");
+              << color::muted("  按 Ctrl+C 停止（仅人工可退出）。\n");
+
+    // 首次构建：地址已就绪（服务器已监听），构建完成后刷新即可预览
+    if (build) {
+        std::cout << color::muted("  首次构建中，完成后即可访问…\n\n");
+        int rc = run_build(in, root, false, false);
+        if (rc != 0) {
+            std::cerr << color::error("首次构建失败，预览终止\n");
+            CDOCS_CLOSESOCK(s);
+            return rc;
+        }
+        std::cout << color::green("✓ 首次构建完成，预览已就绪") << "\n\n";
+    }
 
     if (open) open_browser("http://localhost:" + std::to_string(port) + "/");
 

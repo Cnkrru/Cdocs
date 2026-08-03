@@ -33,18 +33,53 @@ void write_root_redirect(BuildContext& b) {
     }
 }
 
-// 5) 根目录额外生成默认语言 feed 与 PWA（供根 index.html 重定向页使用）
+// 5) 全部语言 feed + PWA（收尾统一生成，供各语言页与根 index.html 使用）
+//    所有页面渲染完成后集中输出（日志在构建末尾）；只收博客订阅流，无博客跳过。
 void write_root_feeds_pwa(BuildContext& b) {
     SiteConfig& cfg = b.cfg;
     I18nCfg& i18n = b.i18n;
     I18nDict& fallbackUI = b.fallbackUI;
     const fs::path& out_dir = b.out_dir;
 
-    // i18n 站点：在 dist 根额外生成默认语言 feed 与 PWA（供根 index.html 重定向页使用）
+    // ---- 各语言 RSS / JSON Feed（单语言 = 根目录一份，multi=false）----
+    if (!b.blog_posts.empty()) {
+        std::vector<std::string> locs;
+        if (i18n.enabled)
+            for (auto& kv : i18n.labels) locs.push_back(kv.first);
+        else
+            locs.push_back("");   // 单语言：根目录一份
+        std::error_code sec;
+        fs::create_directories(g_engine / ".build", sec);
+        for (auto& loc : locs) {
+            const I18nDict& dict = (i18n.enabled && i18n.dicts.count(loc))
+                                       ? i18n.dicts.at(loc) : fallbackUI;
+            bool multi = i18n.enabled;
+            // 增量跳过：serve -w 且全局未变时，博客集签名一致则复用旧产物
+            std::string sig = feed_sig(b.blog_posts, cfg, loc, multi);
+            fs::path feedSigFile = g_engine / ".build" / ".feeds.sig";
+            bool skip = false;
+            if (b.incremental && !b.globalDirty) {
+                json prev = json::object();
+                if (fs::exists(feedSigFile)) {
+                    try { prev = json::parse(read_file(feedSigFile)); } catch (...) {}
+                }
+                skip = (prev.value(loc, std::string()) == sig);
+            }
+            if (!skip) {
+                gen_feeds(multi ? out_dir / loc : out_dir, loc, b.blog_posts, cfg, dict, multi);
+                json all = json::object();
+                if (fs::exists(feedSigFile)) {
+                    try { all = json::parse(read_file(feedSigFile)); } catch (...) {}
+                }
+                all[loc] = sig;
+                std::ofstream f(feedSigFile); f << all.dump();
+            }
+        }
+    }
+    // ---- PWA（manifest + service worker + theme-color；单语言已由语言循环生成）----
     if (i18n.enabled) {
-        const I18nDict& dDict = i18n.dicts.count(i18n.defaultLocale) ? i18n.dicts.at(i18n.defaultLocale) : fallbackUI;
-        if (!b.blog_posts.empty())   // 根 feed 只收博客订阅流；无博客（纯文档站）跳过
-            gen_feeds(out_dir, i18n.defaultLocale, b.blog_posts, cfg, dDict, true, /*silent=*/true);
+        const I18nDict& dDict = i18n.dicts.count(i18n.defaultLocale)
+                                    ? i18n.dicts.at(i18n.defaultLocale) : fallbackUI;
         gen_pwa(out_dir, cfg, i18n_replace(cfg.title, dDict), theme_root() / "assets");
     }
 }

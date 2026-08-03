@@ -433,31 +433,8 @@ static void render_one_locale(BuildContext& b, const json& maps, const std::stri
     render_markets(b, rc);
     render_single(b, rc);
 
-    // 11) RSS / JSON Feed（行业标准，内建，无需 Node；只收博客订阅流，文档页不进）
-    //     增量构建（serve -w 且全局未变）时比对博客集签名，未变则跳过重算（复用旧产物）。
-    if (hasFeed) {
-        std::string sig = feed_sig(b.blog_posts, cfg, loc, multi);
-        fs::path feedSigFile = g_engine / ".build" / ".feeds.sig";
-        bool skip = false;
-        if (b.incremental && !b.globalDirty) {
-            json prev = json::object();
-            if (fs::exists(feedSigFile)) {
-                try { prev = json::parse(read_file(feedSigFile)); } catch (...) {}
-            }
-            skip = (prev.value(loc, std::string()) == sig);
-        }
-        if (!skip) {
-            gen_feeds(locOut, loc, b.blog_posts, cfg, dict, multi);
-            json all = json::object();
-            if (fs::exists(feedSigFile)) {
-                try { all = json::parse(read_file(feedSigFile)); } catch (...) {}
-            }
-            all[loc] = sig;
-            std::error_code sec;
-            fs::create_directories(g_engine / ".build", sec);
-            std::ofstream f(feedSigFile); f << all.dump();
-        }
-    }
+    // 11) RSS / JSON Feed 后置：统一在 run_build 收尾的 write_root_feeds_pwa 生成
+    //     （所有页面渲染完成后集中输出，日志在末尾；含增量签名跳过逻辑）
     // 12) PWA（manifest + service worker + theme-color），内建替代 gen-pwa.js
     gen_pwa(locOut, cfg, feedTitle, theme_root() / "assets");}
 
