@@ -1,0 +1,11 @@
+{
+  "name": "giscus",
+  "description": "Giscus 评论（GitHub Discussions 驱动，无后端）。在 on_config 阶段返回按语言的正文末尾注入片段。",
+  "version": "1.0.0",
+  "hooks": {
+    "on_config": {
+      "cmd": "python scripts/giscus.py",
+      "timeout": 15
+    }
+  }
+}

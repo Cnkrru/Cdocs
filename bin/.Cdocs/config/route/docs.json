@@ -1,0 +1,97 @@
+{
+  "sidebar": [
+    {
+      "items": [
+        {
+          "file": "getting-started/intro",
+          "title": "{{navIntro}}"
+        },
+        {
+          "file": "getting-started/guide",
+          "title": "{{navGuide}}"
+        }
+      ],
+      "title": "{{navGettingStarted}}"
+    },
+    {
+      "items": [
+        {
+          "file": "generator/commands",
+          "title": "{{navCommands}}"
+        },
+        {
+          "file": "generator/architecture",
+          "title": "{{navArchitecture}}"
+        },
+        {
+          "file": "generator/features",
+          "title": "{{navFeatures}}"
+        },
+        {
+          "file": "generator/versioning",
+          "title": "{{navVersioning}}"
+        }
+      ],
+      "title": "{{navGenerator}}"
+    },
+    {
+      "items": [
+        {
+          "file": "reference/api",
+          "title": "{{navApi}}"
+        },
+        {
+          "file": "reference/themes",
+          "title": "{{navThemes}}"
+        },
+        {
+          "file": "reference/plugins",
+          "title": "{{navPlugins}}"
+        },
+        {
+          "items": [
+            {
+              "file": "generator/pipeline",
+              "title": "{{navPipeline}}"
+            },
+            {
+              "file": "generator/render",
+              "title": "{{navRender}}"
+            }
+          ],
+          "title": "{{navInternals}}"
+        },
+        {
+          "title": "Shortcode 参考",
+          "file": "reference/shortcodes"
+        }
+      ],
+      "title": "{{navReference}}"
+    },
+    {
+      "items": [
+        {
+          "file": "tests/test-markdown",
+          "title": "{{navTestMarkdown}}"
+        },
+        {
+          "file": "tests/test-mermaid",
+          "title": "{{navTestMermaid}}"
+        },
+        {
+          "file": "tests/test-katex",
+          "title": "{{navTestKatex}}"
+        },
+        {
+          "file": "tests/test-lightbox",
+          "title": "{{navTestLightbox}}"
+        },
+        {
+          "title": "Shortcodes",
+          "file": "tests/test-shortcodes"
+        }
+      ],
+      "title": "{{navTests}}"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "component": "TagPage",
+      "sections": [
+        {
+          "component": "TagDocItem",
+          "each": "tag_docs"
+        }
+      ]
+    }
+  ]
+}

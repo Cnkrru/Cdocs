@@ -1,0 +1,21 @@
+<span class="ls-item current">{{header.lang_switch.current}}</span>
+<style>
+.locale-switch .ls-item {
+  display: block;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color .15s, background .15s;
+}
+.locale-switch .ls-item:hover {
+  color: var(--fg);
+  background: var(--panel);
+}
+.locale-switch .ls-item.current {
+  color: var(--accent);
+  font-weight: 600;
+}
+</style>

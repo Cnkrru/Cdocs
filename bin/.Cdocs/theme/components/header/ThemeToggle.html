@@ -1,0 +1,26 @@
+      <button id="theme-toggle" class="theme-toggle" aria-label="{{header.theme_label}}"></button>
+<style>
+.theme-toggle {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 14px;
+  transition: border-color .15s, color .15s;
+}
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* 隐藏硬编码的 🌓，由 JS 注入 sun/moon 图标 */
+.theme-toggle {
+  font-size: 0;
+}
+.theme-toggle .icon {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+}
+</style>

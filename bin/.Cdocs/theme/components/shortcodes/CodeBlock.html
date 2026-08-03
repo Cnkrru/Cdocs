@@ -1,0 +1,27 @@
+<div class="codeblock">
+  <div class="codeblock-label">{{lang}}</div>
+  <pre><code class="language-{{lang}}">{{slot_raw}}</code></pre>
+</div>
+<style>
+/* CodeBlock 独立使用：语言标签页 + 代码块（pre 底/字体/复制按钮复用主题 .content pre） */
+.codeblock {
+  margin: 20px 0;
+}
+.codeblock .codeblock-label {
+  display: inline-block;
+  position: relative;
+  z-index: 1;
+  margin-bottom: -1px;
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+}
+.codeblock pre {
+  border-top-left-radius: 0;
+}
+</style>

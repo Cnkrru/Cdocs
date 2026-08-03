@@ -1,0 +1,33 @@
+      <button id="menu-toggle" class="menu-toggle" type="button" aria-label="{{header.menu_label}}"></button>
+<style>
+.menu-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  margin-right: 4px;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color .15s, color .15s;
+}
+.menu-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* 移动端汉堡菜单：隐藏硬编码 ☰（menu 图标由 style.css 的 .menu-toggle::before 提供，
+   url() 相对主题资产目录，内嵌 style 无法承载） */
+.menu-toggle {
+  font-size: 0;
+}
+@media (max-width:800px) {
+  .menu-toggle {
+    display: inline-flex;
+  }
+}
+</style>

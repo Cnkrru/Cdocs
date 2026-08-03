@@ -1,0 +1,57 @@
+    <div class="topbar-center">
+{{slot}}    </div>
+<style>
+.topbar-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 8px;
+}
+.topbar-center .search {
+  width: min(100%, 460px);
+}
+@media (max-width:800px) {
+  /* 移动端顶栏：搜索框 / GitHub 移入抽屉（nav.js relocateMobileTools），
+     header 保留汉堡 + logo + 语言切换 + 主题切换 */
+  .topbar-center {
+    display: none;
+  }
+  .topbar-center .search {
+    min-width: 80px;
+  }
+  /* 抽屉内搜索框可见（nav.js 把 .topbar-center 移入抽屉） */
+  .sidebar.left > .mobile-tools > .topbar-center {
+    display: block;
+  }
+  /* 首页（page-home）无侧边栏：无汉堡按钮，搜索框留在 header、抽屉整体隐藏 */
+  .page-home .topbar-center {
+    display: block;
+    flex: 1;
+    min-width: 0;
+  }
+  .page-home .topbar-center .search {
+    max-width: 100%;
+  }
+  /* 抽屉内被 JS 移入的工具元素样式（覆盖上面的 display:none） */
+  .sidebar.left .topbar-center {
+    display: block;
+    flex: none;
+    width: 100%;
+    padding: 0 0 14px;
+    margin: 0 0 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar.left .topbar-center .search-box {
+    width: 100%;
+    overflow: visible;
+    transition: none;
+  }
+  .sidebar.left .topbar-center .search {
+    width: 100%;
+    background: var(--panel);
+    border-color: var(--border);
+    cursor: text;
+  }
+}
+</style>
