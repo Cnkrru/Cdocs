@@ -1,0 +1,74 @@
+<div class="market plugin-market" id="plugin-market">
+  <script>
+  (function () {
+    var items = {{plugin_market}};
+    if (!items || !items.length) return;
+    var box = document.getElementById('plugin-market');
+    var wrap = document.createElement('div');
+    wrap.className = 'market-grid';
+    items.forEach(function (it) {
+      var card = document.createElement('div');
+      card.className = 'market-card';
+      var dl = 'https://minhaskamal.github.io/DownGit/#/home?url=' +
+               encodeURIComponent('https://github.com/' + it.repo + '/tree/main/' + it.folder);
+      card.innerHTML =
+        '<div class="market-card-body">' +
+          '<h3 class="market-name"></h3>' +
+          '<p class="market-desc"></p>' +
+          '<p class="market-path"><code>' + (it.folder || '').split('/').pop() + '</code></p>' +
+        '</div>' +
+        '<div class="market-card-foot">' +
+          '<a class="market-dl" href="' + dl + '" target="_blank" rel="noopener">下载文件夹</a>' +
+          '<a class="market-src" href="https://github.com/' + it.repo + '/tree/main/' + it.folder +
+            '" target="_blank" rel="noopener">查看源码</a>' +
+        '</div>';
+      card.querySelector('.market-name').textContent = it.name || it.folder;
+      card.querySelector('.market-desc').textContent = it.desc || '';
+      wrap.appendChild(card);
+    });
+    box.appendChild(wrap);
+  })();
+  </script>
+  <noscript><p>请启用 JavaScript 以加载市场列表。</p></noscript>
+</div>
+<style>
+.market { margin: 20px 0; }
+.market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.market-card {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: transform .15s, box-shadow .15s;
+}
+.market-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.market-card-body { flex: 1; padding: 14px 16px 8px; }
+.market-name { margin: 0 0 6px; font-family: var(--font-serif); font-size: 16px; color: var(--fg); }
+.market-desc { margin: 0 0 8px; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.market-path code {
+  font-family: var(--font-mono); font-size: 11.5px;
+  background: var(--panel); border: 1px solid var(--border-light);
+  padding: 2px 7px; border-radius: 6px; color: var(--fg);
+}
+.market-card-foot {
+  display: flex; gap: 8px; padding: 10px 16px 14px;
+  border-top: 1px solid var(--border-light);
+}
+.market-dl {
+  padding: 6px 14px; border-radius: 8px;
+  background: var(--accent); color: #fff;
+  text-decoration: none; font-size: 13px; font-weight: 600;
+  transition: background .15s;
+}
+.market-dl:hover { background: var(--accent-hover); }
+.market-src {
+  padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--border); color: var(--muted);
+  text-decoration: none; font-size: 13px;
+  transition: color .15s, border-color .15s;
+}
+.market-src:hover { color: var(--accent); border-color: var(--accent); }
+@media (max-width:560px) { .market-grid { grid-template-columns: 1fr; } }
+</style>

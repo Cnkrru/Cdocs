@@ -1,0 +1,22 @@
+{
+  "theme_market": [
+    {
+      "name": "ink 水墨",
+      "desc": "水墨国风：宣纸底色、朱砂点缀、衬线标题、明暗双主题。Cdocs 默认主题。",
+      "repo": "Cnkrru/Cdocs",
+      "folder": "web/themes/ink"
+    },
+    {
+      "name": "paper 博客",
+      "desc": "博客风：窄内容栏、默认浅色、顶部导航、首页卡片流。",
+      "repo": "Cnkrru/Cdocs",
+      "folder": "web/themes/paper"
+    },
+    {
+      "name": "frost 玻璃拟态",
+      "desc": "玻璃拟态：毛玻璃面板、渐变背景、沉浸式头图。",
+      "repo": "Cnkrru/Cdocs",
+      "folder": "web/themes/frost"
+    }
+  ]
+}

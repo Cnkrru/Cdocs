@@ -35,6 +35,7 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc);
 void render_blog(BuildContext& b, const LocaleRenderCtx& rc);
 void render_search_index(BuildContext& b, const LocaleRenderCtx& rc);
 void render_tags(BuildContext& b, const LocaleRenderCtx& rc);
+void render_markets(BuildContext& b, const LocaleRenderCtx& rc);   // 插件/主题市场页
 void render_single(BuildContext& b, const LocaleRenderCtx& rc);
 
 #endif  // CDOCS_RENDER_PAGES_HPP

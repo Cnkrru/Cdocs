@@ -667,6 +667,31 @@ void render_tags(BuildContext& b, const LocaleRenderCtx& rc) {
     }
 }
 
+// 插件市场 / 主题市场页（数据来自 .Cdocs/data/*-market.json 站点数据，
+// 由短代码组件 PluginMarket/ThemeMarket 渲染列表 + 下载链接）
+void render_markets(BuildContext& b, const LocaleRenderCtx& rc) {
+    const SiteConfig& cfg = b.cfg;
+    const RenderOpts& opt = b.opt;
+    const json& maps = rc.maps;
+    const I18nDict& dict = rc.dict;
+    std::error_code ec;
+    struct Mkt { const char* type; const char* mode; const char* title; };
+    for (const auto& m : { Mkt{"plugin-market", "plugin-market", "插件市场"},
+                           Mkt{"theme-market", "theme-market", "主题市场"} }) {
+        PageCtx ctx;
+        ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
+        ctx.title = m.title;
+        ctx.desc = cfg.description;
+        ctx.curLocale = rc.curLocale; ctx.lang_data = rc.langData;
+        ctx.i18nJson = rc.i18nJson; ctx.relBase = "../";
+        std::string ov = map_render_page(cfg, opt, ctx, type_for_mode(maps, m.mode, m.type));
+        fs::create_directories(rc.locOut / m.type, ec);
+        std::ofstream(rc.locOut / m.type / "index.html")
+            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, rc.dict)), rc.locOut)
+                                               : i18n_replace(ov, rc.dict));
+    }
+}
+
 void render_single(BuildContext& b, const LocaleRenderCtx& rc) {
 
     const SiteConfig& cfg = b.cfg;

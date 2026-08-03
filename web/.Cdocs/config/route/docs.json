@@ -85,6 +85,10 @@
         {
           "title": "Shortcode 参考",
           "file": "reference/shortcodes"
+        },
+        {
+          "title": "插件与主题市场",
+          "file": "reference/markets"
         }
       ],
       "title": "{{navReference}}"

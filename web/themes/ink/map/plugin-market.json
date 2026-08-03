@@ -1,0 +1,9 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "html": "<div class=\"market-intro\"><h1>{{navPlugins}}</h1><p>插件是 Cdocs 的能力扩展：挂接构建生命周期钩子（<code>on_config</code> / <code>on_data_query</code> / <code>setup</code>…）。点「下载文件夹」直接从仓库获取插件目录，放入站点的 <code>.Cdocs/plugins/</code> 即启用。</p></div>\n<style>\n.market-intro { margin-bottom: 22px; }\n.market-intro h1 { border-bottom: 1px solid var(--border); padding-bottom: 10px; }\n.market-intro p { color: var(--muted); }\n.market-intro code { background: var(--panel); border: 1px solid var(--border-light); padding: 2px 6px; border-radius: 6px; font-family: var(--font-mono); font-size: .9em; }\n</style>"
+    },
+    { "component": "PluginMarket" }
+  ]
+}

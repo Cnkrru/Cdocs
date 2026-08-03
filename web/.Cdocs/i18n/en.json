@@ -69,5 +69,7 @@
   "navHome": "Home",
   "navDocs": "Docs",
   "navHelloCdocs": "Cdocs 0.1 Release",
-  "navImplementation": "Implementation"
+  "navImplementation": "Implementation",
+  "marketPlugins": "Plugin Market",
+  "marketThemes": "Theme Market"
 }

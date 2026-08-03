@@ -82,6 +82,7 @@ static std::string json_scalar(const json& v) {
         if (v.is_number_integer()) return std::to_string(v.get<long long>());
         return v.dump();
     }
+    if (v.is_array() || v.is_object()) return v.dump();   // 数组/对象 → JSON 文本（组件 script 内嵌数据用，如市场列表）
     return "";
 }
 

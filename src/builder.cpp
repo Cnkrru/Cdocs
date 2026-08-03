@@ -429,6 +429,7 @@ static void render_one_locale(BuildContext& b, const json& maps, const std::stri
     render_blog(b, rc);
     render_search_index(b, rc);
     render_tags(b, rc);
+    render_markets(b, rc);
     render_single(b, rc);
 
     // 11) RSS / JSON Feed（行业标准，内建，无需 Node；博客文章并入订阅流）
@@ -459,6 +460,7 @@ static void render_locales(BuildContext& b) {
         for (const auto& l : b.cfg.header.nav) {
             if (l.file.empty()) { keep.push_back(l); continue; }
             if (l.file == "blog/index") { if (hasBlog) keep.push_back(l); continue; }
+            if (l.file == "plugin-market/index" || l.file == "theme-market/index") { keep.push_back(l); continue; }   // 市场页（独立渲染，不在 pages 集合）
             if (l.file == "index") { keep.push_back(l); continue; }   // 首页恒保留
             // 双向匹配：非版本化时页面 file 相对 md 根（带 docs/ 前缀，nav 原样即可命中）；
             // 版本化时页面 file 相对源目录（无前缀，需去 docs/ 前缀比较）。

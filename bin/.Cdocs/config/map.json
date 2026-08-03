@@ -1,12 +1,51 @@
 {
   "maps": [
-    { "type": "home", "map": "map/home.json", "mode": "home" },
-    { "type": "doc", "map": "map/doc.json", "mode": "pages" },
-    { "type": "blog", "map": "map/blog.json", "mode": "blog-list" },
-    { "type": "blog-post", "map": "map/blog-post.json", "mode": "blog-post" },
-    { "type": "tags", "map": "map/tags.json", "mode": "tags" },
-    { "type": "tag-page", "map": "map/tag-page.json", "mode": "tag-page" },
-    { "type": "404", "map": "map/404.json", "mode": "single", "output": "404.html" }
+    {
+      "type": "home",
+      "map": "map/home.json",
+      "mode": "home"
+    },
+    {
+      "type": "doc",
+      "map": "map/doc.json",
+      "mode": "pages"
+    },
+    {
+      "type": "blog",
+      "map": "map/blog.json",
+      "mode": "blog-list"
+    },
+    {
+      "type": "blog-post",
+      "map": "map/blog-post.json",
+      "mode": "blog-post"
+    },
+    {
+      "type": "tags",
+      "map": "map/tags.json",
+      "mode": "tags"
+    },
+    {
+      "type": "tag-page",
+      "map": "map/tag-page.json",
+      "mode": "tag-page"
+    },
+    {
+      "type": "404",
+      "map": "map/404.json",
+      "mode": "single",
+      "output": "404.html"
+    },
+    {
+      "type": "plugin-market",
+      "map": "map/plugin-market.json",
+      "mode": "plugin-market"
+    },
+    {
+      "type": "theme-market",
+      "map": "map/theme-market.json",
+      "mode": "theme-market"
+    }
   ],
   "templates": {
     "base": "map/base.json"
