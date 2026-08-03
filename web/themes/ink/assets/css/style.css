@@ -302,13 +302,13 @@ body {
   pointer-events: none;
 }
 .pager-item.prev .pager-label::before {
-  -webkit-mask-image: url(../icons/arrow-left.svg);
-  mask-image: url(../icons/arrow-left.svg);
+  -webkit-mask: url(../icons/arrow-left.svg) center / contain no-repeat;
+  mask: url(../icons/arrow-left.svg) center / contain no-repeat;
   margin-right: 5px;
 }
 .pager-item.next .pager-label::after {
-  -webkit-mask-image: url(../icons/arrow-right.svg);
-  mask-image: url(../icons/arrow-right.svg);
+  -webkit-mask: url(../icons/arrow-right.svg) center / contain no-repeat;
+  mask: url(../icons/arrow-right.svg) center / contain no-repeat;
   margin-left: 5px;
 }
 /* 外链小图标（顶栏 / 页脚外链） */

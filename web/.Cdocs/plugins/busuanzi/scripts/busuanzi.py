@@ -95,7 +95,10 @@ SCRIPT = """
     var el = document.querySelectorAll("[data-bsz]");
     for (var i = 0; i < el.length; i++) {
       var e = el[i], k = e.getAttribute("data-bsz");
-      if (r && r[k] !== undefined) e.textContent = fmt(r[k]);
+      if (!r) continue;
+      var v = r[k];
+      if (v === undefined && k.indexOf("busuanzi_") === 0) v = r[k.slice(9)];  // 兼容无前缀键
+      if (v !== undefined) e.textContent = fmt(v);
     }
     var upd = document.querySelector("[data-bsz-update]");
     if (upd) upd.textContent = r ? I.updated + " " + new Date().toLocaleTimeString() : I.fail;
@@ -133,8 +136,8 @@ SCRIPT = """
         '<div class="bsz-head"><span class="bsz-title">' + I.title + '</span>' +
         '<button type="button" class="bsz-close" aria-label="close">&times;</button></div>' +
         '<div class="bsz-body">' +
-          row(I.pv, "site_pv") + row(I.uv, "site_uv") +
-          row(I.ppv, "page_pv") + row(I.puv, "page_uv") +
+          row(I.pv, "busuanzi_site_pv") + row(I.uv, "busuanzi_site_uv") +
+          row(I.ppv, "busuanzi_page_pv") + row(I.puv, "busuanzi_page_uv") +
           '<div class="bsz-updated" data-bsz-update>' + I.empty + '</div>' +
         '</div>' +
       '</div>';
