@@ -59,7 +59,7 @@ jobs:
 
       - name: 提交 Cdocs-linux 到仓库
         run: |
-          cp Cdocs web/Cdocs-linux
+          cp web/Cdocs web/Cdocs-linux
           chmod +x web/Cdocs-linux
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
