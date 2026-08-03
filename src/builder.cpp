@@ -990,6 +990,39 @@ static int prepare_pages(BuildContext& b) {
 
 // ============ 地图模式整页渲染（v2：读 theme/map/<type>.html 按图拼接，无自定义控制流语法） ============
 // 数据：C++ 只产 json（PageCtx + 环境数据），HTML 全部在 theme/map/*.html + theme/components/**。
+
+// ---- 站点自定义数据（v6）：.Cdocs/data/*.json ----
+// 用户放任意 KV 数据文件（多文件按文件名序加载，键平铺合并）。"有 KV 就拿，没 KV 就算了"——
+// 合并进页面数据作用域后，组件数据孔命中即取；未命中的键走内置数据层 / 原样保留（L2 兜底）。
+// 优先级：props > 地图 data > 站点 data > 内置引擎键。
+static json g_site_data;
+static bool g_site_data_loaded = false;
+static const json& site_data() {
+    if (g_site_data_loaded) return g_site_data;
+    g_site_data_loaded = true;
+    std::error_code ec;
+    fs::path d = g_engine / "data";
+    if (!fs::is_directory(d, ec)) return g_site_data;
+    std::vector<fs::path> files;
+    for (auto it = fs::directory_iterator(d, ec), end = fs::directory_iterator();
+         it != end; it.increment(ec)) {
+        if (ec) { ec.clear(); continue; }
+        if (it->is_regular_file(ec) && it->path().extension() == ".json") files.push_back(it->path());
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& f : files) {
+        try {
+            json j = json::parse(read_file(f));
+            if (j.is_object())
+                for (auto it = j.begin(); it != j.end(); ++it) g_site_data[it.key()] = it.value();
+        } catch (...) {
+            if (g_comp_warned.insert("data:" + f.string()).second)
+                std::cerr << color::warn("警告: ") << "站点数据文件解析失败: " << f << "\n";
+        }
+    }
+    return g_site_data;
+}
+
 static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
                                    const PageCtx& pcx, const std::string& mapType,
                                    bool isHome = false) {
@@ -1037,6 +1070,14 @@ static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
         {"scripts", json{{"highlight", opt.showCodeHighlight}, {"search", opt.showSearch},
                          {"i18n_json", pcx.i18nJson}, {"feedback", cfg.feedbackEndpoint}}}
     };
+    // 站点自定义数据（v6）：.Cdocs/data/*.json 合并进页面数据作用域（优先级：props > 地图 data > 站点 data > 内置）
+    {
+        const json& sd = site_data();
+        for (auto it = sd.cbegin(); it != sd.cend(); ++it) {
+            data[it.key()] = it.value();
+            g_tpl_keys.insert(it.key());   // 站点 data 键加入 L2 白名单（"有 kv 就拿"；没 kv 不误报）
+        }
+    }
     // 收集合法模板键 → g_tpl_keys（L2 残留检测白名单）
     for (auto it = data.cbegin(); it != data.cend(); ++it) g_tpl_keys.insert(it.key());
     std::string out = compose_page(mapType, data);
@@ -2430,6 +2471,7 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
     fs::create_directories(dir / "archetypes", ec);
     fs::create_directories(dir / ".Cdocs" / "config", ec);
     fs::create_directories(dir / ".Cdocs" / "i18n", ec);
+    fs::create_directories(dir / ".Cdocs" / "data", ec);   // 站点自定义数据（v6）：任意 KV 文件
 
     // 复制运行所需资源（theme 主题 + deps 运行时依赖；config/i18n 会被下面写入覆盖）
     fs::path eng = exe_dir() / ".Cdocs";
@@ -2527,6 +2569,17 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
     // 3) i18n 字典（双语完整，确保可构建）
     std::ofstream(dir / ".Cdocs/i18n/zh-CN.json") << kZhCN;
     std::ofstream(dir / ".Cdocs/i18n/en.json")   << kEn;
+
+    // 3.5) 站点自定义数据示例（v6：.Cdocs/data/*.json 任意 KV，合并进页面数据作用域——
+    //     组件数据孔 {{products.0.name}} 等命中即取；没 kv 就算了，走内置数据层）
+    std::ofstream(dir / ".Cdocs/data/site.json")
+        << "{\n"
+        << "  \"site_author\": \"Cdocs 团队\",\n"
+        << "  \"products\": [\n"
+        << "    { \"name\": \"Cdocs 生成器\", \"price\": \"免费\" },\n"
+        << "    { \"name\": \"Cdocs 主题包\", \"price\": \"开源\" }\n"
+        << "  ]\n"
+        << "}\n";
 
     // 4) 页面地图注册表（v2：C++ 构建时读此配置了解有哪些站点地图；地图本体在 theme/map/，JSON 约定）
     std::ofstream(dir / ".Cdocs/config/map.json")
