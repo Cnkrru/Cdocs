@@ -9,6 +9,7 @@ Cdocs
 
 # 分发包（web/.Cdocs/tools/make_release.py 可重建，不入库）
 bin/
+release/
 
 # 日志与临时文件
 *.log
