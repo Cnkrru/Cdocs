@@ -42,21 +42,28 @@ def main():
     # 若历史残留（如旧 .build），额外尝试清理（失败不影响发布包正确性）。
     os.makedirs(BIN, exist_ok=True)
 
-    # 1) Cdocs.exe（优先用 release/ 里的已编译版本，其次根目录）
+    # 1) Cdocs.exe（优先用 web/ 下 build.sh 的编译产物；Windows 版取 Cdocs.exe）
     exe = None
-    for cand in (os.path.join(ROOT, "release", "Cdocs.exe"),
-                 os.path.join(ROOT, "Cdocs.exe")):
+    for cand in (os.path.join(ROOT, "web", "Cdocs.exe"),
+                 os.path.join(ROOT, "web", "Cdocs"),
+                 os.path.join(ROOT, "release", "Cdocs.exe")):
         if os.path.exists(cand):
             exe = cand
             break
     if not exe:
-        print("错误：未找到 Cdocs.exe，请先编译"); sys.exit(1)
+        print("错误：未找到 Cdocs 二进制，请先在 web/ 下执行 bash .Cdocs/tools/build.sh"); sys.exit(1)
     shutil.copy2(exe, os.path.join(BIN, "Cdocs.exe"))
     print(f"✔ Cdocs.exe 来自 {os.path.relpath(exe, ROOT)} ({os.path.getsize(exe)/1024/1024:.1f} MB)")
 
     # 2) .Cdocs 引擎资源（源 = web/.Cdocs）
     os.makedirs(os.path.join(BIN, ".Cdocs"), exist_ok=True)
     copy_tree(SRC, os.path.join(BIN, ".Cdocs"), "")
+
+    # 2.5) serve.bat 全局预览启动器（放 bin/ 根，与 Cdocs.exe 同目录）
+    sv = os.path.join(SRC, "tools", "serve.bat")
+    if os.path.exists(sv):
+        shutil.copy2(sv, os.path.join(BIN, "serve.bat"))
+        print("✔ serve.bat（全局预览启动器）")
 
     # 3) 尽力清理历史排除残留（存在才删；被安全钩子拦则跳过）
     for rel in list(EXCLUDE_REL) + list(EXCLUDE_DIRS):

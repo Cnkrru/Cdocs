@@ -1,8 +1,0 @@
-{
-  "extends": "base",
-  "sections": [
-    {
-      "component": "NotFound"
-    }
-  ]
-}
