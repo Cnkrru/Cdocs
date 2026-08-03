@@ -16,14 +16,19 @@ Cdocs 是一个**命令行驱动的静态文档站生成器**，不对外暴露 
 
 | 命令 | 说明 | 常用旗标 |
 | --- | --- | --- |
-| `Cdocs init <目录>` | 新建完整站点骨架（config/route/i18n/示例文档/主题资源）并自动构建 | `--no-engine` 仅生成内容骨架 |
+| `Cdocs init <目录>` | 新建完整站点骨架（config/sidebar/i18n/示例文档/主题资源）并自动构建 | `--no-engine` 仅内容骨架；`--defaults`/`-y` 跳过交互 |
 | `Cdocs new <页面名>` | 新建内容页（从 `archetypes/default.md`）并登记导航（别名 `add`/`page`） | — |
-| `Cdocs build [源] [目标]` | 构建站点，默认 `docs` → `dist` | `-D/--drafts` 含草稿、`--clean` 构建前清空 |
+| `Cdocs section <blog\|docs\|md-v<n>>` | 添加内容区（分类），blog/docs 唯一、版本可多个 | — |
+| `Cdocs build [源] [目标]` | 构建站点，默认 `md` → `dist` | `-D/--drafts` 含草稿、`--clean` 构建前清空 |
 | `Cdocs serve` | 构建并启动本地预览服务器（内置 C++ HTTP，默认 `8088`） | `-p/--port`、`-o/--open`、`-w/--watch` 热重载、`--no-build` |
-| `Cdocs deploy` | 构建并推送到远端分支（默认 `gh-pages`），对标 `mkdocs gh-deploy` | `--remote <url>`、`--branch <b>`、`-m <msg>`、`--force` |
+| `Cdocs deploy` | 构建并发布（gh-pages 分支 / Vercel） | `--remote <url>`、`--branch <b>`、`-m <msg>`、`--force`、`--vercel`、`--setup` |
+| `Cdocs doctor` | 环境与配置自检（config/内容区/主题/工具探测） | — |
+| `Cdocs check` | 站点质量检查：死链 + 组件 token 残留 + 未渲染数据孔 | — |
+| `Cdocs config` | 打印解析后的配置摘要（诊断用） | — |
+| `Cdocs routes` | 列出 sidebar 登记的页面路由清单 | — |
 | `Cdocs clean` | 清空输出目录（对标 `jekyll clean`） | — |
 | `Cdocs version` / `-v` | 显示版本号 | — |
-| `Cdocs help` / `-h` | 显示帮助 | — |
+| `Cdocs help [命令]` / `-h` | 显示帮助（可指定命令查看子帮助） | — |
 
 ### deploy 详解
 
@@ -187,14 +192,15 @@ Cdocs deploy --setup
 ```
 .Cdocs/theme/
 ├── theme.json          主题元数据（name/version/description…）
-├── templates/
-│   └── layout.html     页面骨架模板（占位符注入，缺失回退内置骨架）
+├── map/                页面地图 JSON（每个页面类型一个，extends 继承）
+├── components/         组件（结构+样式+交互 内嵌自包含，含 shortcodes/）
 └── assets/             前端资源（整目录拷入 dist/assets/）
 ```
 
-- `layout.html` 用 `{{key}}` 占位符接收引擎生成的子块：`{{header}}` / `{{left_nav}}` / `{{body}}` / `{{pager}}` / `{{footer}}` 等（全表见主题文档）。
-- `assets/` 原样复制到 `dist/<loc>/assets/`，浏览器 URL 不变；构建产物额外生成 `assets/deps/`（运行时依赖）与 `assets/search.json`（搜索索引）。
-- 旧结构（`.Cdocs/assets/` + `.Cdocs/templates/` 直放引擎根）自动兼容。
+- 页面结构由 `map/*.json` 描述（html/component/if/each/sections 五种章节约定），页面元素由 `components/` 组件提供；
+- 组件用 `{{key}}` 数据孔接收引擎数据：`{{header}}` / `{{body}}` / `{{slot}}` / `{{a.b.c}}` 等（全表见主题文档）；
+- **样式组件化**：组件文件内嵌 `<style>`（结构+样式+交互三位一体），复制组件文件即带走全套样式；含 `url()` 的图标规则与主题变量留在 `style.css`；
+- `assets/` 原样复制到 `dist/<loc>/assets/`；构建产物额外生成 `assets/deps/`（运行时依赖）与 `assets/search.json`（搜索索引）；
 - `config.site.themeVars` 覆盖主题公开的 CSS 变量；`config.site.customCss` 追加自定义样式。
 
 ---

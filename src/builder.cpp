@@ -1664,6 +1664,10 @@ static void scan_output_leftovers(const fs::path& outDir) {
                 "skip_link","header","left_nav","breadcrumb","edit_link","pager","toc_sidebar",
                 "footer","back_to_top","highlight_js","search_js","i18n_json","feedback_js",
                 "highlight_css","meta_desc","custom_head","last_updated","body","body_class",
+                // shortcode 组件数据孔（shortcodes.md 等教学文档展示 {{slot}}/{{slot_raw}}）
+                "slot","slot_raw",
+                // shortcode 组件数据孔（shortcodes.md 等教学文档展示 {{slot}}/{{slot_raw}}）
+                "slot","slot_raw",
                 // 组件子块键（Header/Footer/CardGrid 拆分时的数据键，文档有展示）
                 "left_nav_tree","cards_html","menu_toggle","logo","topnav","search","header_nav",
                 "locale_switch","version_select","theme_toggle","github_link",

@@ -16,10 +16,15 @@ Cdocs is a **CLI-driven static documentation site generator** with no public C++
 | --- | --- | --- |
 | `Cdocs init <dir>` | Scaffold a complete site (config/route/i18n/sample docs/theme assets) and build it | `--no-engine` content-only skeleton |
 | `Cdocs new <page>` | Create a page from `archetypes/default.md` and register it in navigation (alias `add`/`page`) | — |
-| `Cdocs build [src] [dst]` | Build the site, default `docs` → `dist` | `-D/--drafts`, `--clean` |
+| `Cdocs build [src] [dst]` | Build the site (default `md` → `dist`) | `-D/--drafts`, `--clean` |
 | `Cdocs serve` | Build and start the built-in preview server (default port `8088`) | `-p/--port`, `-o/--open`, `-w/--watch`, `--no-build` |
-| `Cdocs deploy` | Build and push to a remote branch (default `gh-pages`), modeled after `mkdocs gh-deploy` | `--remote <url>`, `--branch <b>`, `-m <msg>`, `--force` |
-| `Cdocs clean` | Clear the output directory | — |
+| `Cdocs deploy` | Build & publish (gh-pages branch / Vercel) | `--remote <url>`, `--branch <b>`, `-m <msg>`, `--force`, `--vercel`, `--setup` |
+| `Cdocs clean` | Wipe the output dir (like `jekyll clean`) | — |
+| `Cdocs section <blog|docs|md-v<n>>` | Add a content area (category); blog/docs unique, versions multiple | — |
+| `Cdocs doctor` | Environment & config self-check (config/areas/theme/tools) | — |
+| `Cdocs check` | Site quality check: broken links + token leftovers + unrendered data holes | — |
+| `Cdocs config` | Print parsed config summary (diagnostic) | — |
+| `Cdocs routes` | List page routes registered in sidebar | — |
 | `Cdocs version` / `-v` | Print version | — |
 | `Cdocs help` / `-h` | Print help | — |
 

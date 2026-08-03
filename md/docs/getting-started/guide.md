@@ -23,27 +23,35 @@ bash .Cdocs/tools/build.sh
 Cdocs 采用 Hugo 式子命令，编译完成后可直接调用：
 
 ```bash
-Cdocs                     # 无命令 = build（docs → dist）
-Cdocs build [输入] [输出]  # 构建站点，默认 docs → dist
+Cdocs -h                  # 帮助（无参数运行也打印帮助）
+Cdocs init mysite         # 建站：新建完整站点骨架并自动构建
+Cdocs new my-page         # 建页：新建一篇文档并登记导航
+Cdocs section blog        # 加内容区（分类）
+Cdocs build [输入] [输出]  # 构建站点，默认 md → dist
 Cdocs serve [-p 端口]     # 构建并启动本地预览（内置服务器，默认 http://localhost:8088）
-Cdocs new  <目录>         # 在指定目录创建一个新站点
+Cdocs doctor              # 环境自检
+Cdocs check               # 质量检查（死链/token/数据孔）
+Cdocs routes              # 页面路由清单
 Cdocs version             # 查看版本
-Cdocs help                # 查看帮助
 ```
 
 常用旗标：
 
 ```bash
+Cdocs build --clean       # 构建前清空输出目录
+Cdocs build -D            # 包含草稿（默认排除）
 Cdocs build docs public   # 指定输入/输出目录
 Cdocs serve -p 3000       # 换预览端口
 Cdocs serve --no-build    # 跳过构建，直接预览现有 dist
-Cdocs serve -d public     # 预览指定目录
+Cdocs serve -o -w         # 启动自动开浏览器 + 文件改动热重载
+Cdocs deploy --vercel     # 构建并发布到 Vercel
 ```
 
 - **serve** 内置一个 C++ 写的静态 HTTP 服务器，**无需安装 Python 或 Node**，仅监听本机 `127.0.0.1`，改完文档重跑即可刷新预览。
-- **new** 会把生成器引擎（`.Cdocs`）、`Cdocs.exe` 与一份示例 `md/docs/intro.md` 复制到目标目录，新站点开箱即可 `build` / `serve`。
+- **init** 会把生成器引擎（`.Cdocs`）、`Cdocs.exe` 与示例文档复制到目标目录，新站点开箱即可 `build` / `serve`。
+- **doctor / check / config / routes** 是诊断命令：`doctor` 随时可跑（自检环境与配置），`check` 在构建后跑（质量检查），`config` 打印配置摘要，`routes` 列出页面路由。
 
-把 `.md` 文件放进 `md/docs/`，执行后会在 `dist/` 下为每篇生成 `<名字>.html`，并输出 `index.html`、`style.css` 与搜索 / SEO 产物。
+把 `.md` 文件放进 `md/docs/`，执行后会在 `dist/` 下为每篇生成 `<名字>.html`，并输出 `index.html`、`style.css` 与搜索 / SEO / RSS / PWA 产物。
 
 > 兼容旧用法：`Cdocs docs dist`（位置参数）仍然有效，等价于 `Cdocs build docs dist`。
 
@@ -110,6 +118,10 @@ g++ .build/md4c.o .build/md4c-html.o .build/entity.o .build/main.o .build/markdo
 - [x] 图片点击放大（lightbox）
 - [x] 搜索结果跳转定位（命中处滚动 + 闪烁高亮）
 - [x] 代码块语言标签（无文件名也显示语言名）
+- [x] Shortcode 正文组件（`<Tabs/>` / `<Expand/>` / `<CodeGroup/>` / `<Badge/>`，标签语法）
+- [x] 组件样式内嵌化（组件文件 = 结构 + 样式 + 交互 自包含）
+- [x] 诊断命令（`doctor` / `check` / `config` / `routes`）
+- [x] 模块解耦（builder 拆出 component / shortcode / scaffold / diag）
 
 ## 扩展能力
 
@@ -138,6 +150,24 @@ i18n_replace(out, dict); // 替换模板占位符
 ```
 
 代码块右上角有「复制」按钮，复制内容不含行号。
+
+### 正文组件（Shortcode）
+
+用 `<组件/>` 标签语法在正文里嵌入组件（首字母大写 = 组件，小写 = 原生 HTML）：
+
+```markdown
+<Expand title="备份">升级前先复制 .Cdocs 文件夹</Expand>
+
+<Tabs>
+  <Tab label="Windows">用 build.cmd</Tab>
+  <Tab label="macOS">用 build.sh</Tab>
+</Tabs>
+
+<Badge type="new">v1.0</Badge>
+```
+
+内置 `Tabs/Tab`（标签切换）、`Expand`（折叠）、`CodeGroup/CodeBlock`（代码 tab 化）、`Badge`（徽章）；
+主题作者加新组件 = 在 `theme/components/shortcodes/` 写一个 `<Name>.html`（结构 + 样式 + 交互内嵌）。完整规范见 [Shortcode 参考](../reference/shortcodes)。
 
 ### 流程图（Mermaid）
 

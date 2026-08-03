@@ -14,6 +14,8 @@ Cdocs 的功能分两类：**构建期内建**（生成器 C++ 直接产出）�
 | 订阅源 | `rss.xml` / `feed.json` | RSS 2.0 + JSON Feed 1.1，每语言一份 + 根默认语言 |
 | PWA | `manifest.webmanifest` / `sw.js` / `icon.svg` | 离线缓存、主题色 |
 | 标签聚合 | `tags/*.html` | 按 front matter `tags` 自动生成标签页 + 总览 |
+| 提示框 | 正文 HTML | `> [!tip]` Admonitions 11 种类型（构建期展开） |
+| 短代码组件 | 正文 HTML | `<Tabs/>` `<Expand/>` `<CodeGroup/>` `<Badge/>` 等（标签语法，见 [shortcode 参考](../reference/shortcodes)） |
 | 草稿 | — | `draft: true` 默认排除，`build -D` 包含 |
 | 多语言 | `dist/<loc>/` | 每语言独立目录，根页面自动重定向默认语言 |
 
@@ -23,7 +25,6 @@ Cdocs 的功能分两类：**构建期内建**（生成器 C++ 直接产出）�
 |------|------|
 | `theme.js` | 明暗主题切换（记忆 localStorage，首次跟随系统） |
 | `code.js` | 代码块增强：文件名栏 / 行号 / 高亮行 / 语言标签 / 复制按钮 |
-| `admonitions.js` | `> [!tip]` 块引用 → 彩色提示卡片 |
 | `diagrams.js` | Mermaid 图表 + KaTeX 公式渲染（懒加载，含图/公式才加载库） |
 | `nav.js` | 移动端抽屉、目录滚动高亮 |
 | `search.js` | 顶栏搜索下拉（FlexSearch） |

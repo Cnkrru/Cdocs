@@ -24,28 +24,36 @@ bash .Cdocs/tools/build.sh
 Cdocs uses Hugo-style subcommands:
 
 ```bash
-Cdocs                     # no command = build (docs → dist)
-Cdocs build [in] [out]    # build the site, defaults to docs → dist
+Cdocs -h                  # help (no args also prints help)
+Cdocs init mysite         # scaffold: new site skeleton + auto build
+Cdocs new my-page         # new page: create a doc & register in nav
+Cdocs section blog        # add a content area (category)
+Cdocs build [in] [out]    # build the site, defaults to md → dist
 Cdocs serve [-p PORT]     # build and start a local preview (built-in server, default http://localhost:8088)
-Cdocs new  <dir>          # scaffold a new site in the given directory
+Cdocs doctor              # environment self-check
+Cdocs check               # quality check (broken links / tokens / data holes)
+Cdocs routes              # page route listing
 Cdocs version             # show version
-Cdocs help                # show help
 ```
 
 Common flags:
 
 ```bash
+Cdocs build --clean       # wipe output dir before building
+Cdocs build -D            # include drafts (excluded by default)
 Cdocs build docs public   # explicit input/output dirs
 Cdocs serve -p 3000       # change preview port
 Cdocs serve --no-build    # skip build, preview existing dist
-Cdocs serve -d public     # preview a specific directory
+Cdocs serve -o -w         # auto-open browser + hot reload
+Cdocs deploy --vercel     # build & publish to Vercel
 ```
 
 - **serve** runs a small static HTTP server written in C++ — **no Python or Node required** — bound to `127.0.0.1` only.
-- **new** copies the engine (`.Cdocs`), `Cdocs.exe` and a sample `md/docs/intro.md` into the target dir, so the new site is ready to `build` / `serve`.
+- **init** copies the engine (`.Cdocs`), `Cdocs.exe` and sample docs into the target dir, so the new site is ready to `build` / `serve`.
+- **doctor / check / config / routes** are diagnostic commands: `doctor` runs anytime (env & config self-check), `check` runs after a build (quality), `config` prints the parsed config summary, `routes` lists registered page routes.
 
 Drop your `.md` files into `md/docs/`, run it, and `dist/` will contain `<name>.html` per page
-plus `index.html`, `style.css` and the search / SEO outputs.
+plus `index.html`, `style.css` and the search / SEO / RSS / PWA outputs.
 
 > Backward compatible: `Cdocs docs dist` (positional args) still works, equivalent to `Cdocs build docs dist`.
 

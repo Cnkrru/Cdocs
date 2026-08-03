@@ -15,12 +15,13 @@
 
 ## 核心特性
 
-- **命令行**：`build` / `serve` / `new` / `version` / `help` 子命令
+- **命令行**：`init` / `new` / `section` / `build` / `serve` / `deploy` / `clean` + 诊断命令 `doctor` / `check` / `config` / `routes`
 - **内容**：Markdown（基于 md4c，支持 GFM 扩展：表格、任务列表、删除线）
 - **导航**：配置驱动的侧边栏，支持最多 6 层嵌套与分组折叠、移动端抽屉
 - **搜索**：客户端全文搜索（FlexSearch），标题/正文分域 + 命中高亮
 - **主题**：明暗双主题，首次跟随系统、记忆偏好
 - **增强**：代码高亮 / 复制按钮、Admonitions 提示框、`Mermaid` 流程图、KaTeX 公式
+- **正文组件**：`<Tabs/>` `<Expand/>` `<CodeGroup/>` `<Badge/>` 短代码（标签语法，组件样式自包含）
 - **体验**：⌘K 命令面板、图片灯箱、打印 / 导出 PDF、「本页有帮助吗？」反馈
 - **多语言**：i18n（`{{key}}` + 扁平 JSON 字典）
 - **发布**：每页 SEO、sitemap、robots、RSS 2.0 / JSON Feed、PWA 离线

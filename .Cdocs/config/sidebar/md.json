@@ -60,6 +60,10 @@
             }
           ],
           "title": "{{navInternals}}"
+        },
+        {
+          "title": "Shortcode 参考",
+          "file": "docs/reference/shortcodes"
         }
       ],
       "title": "{{navReference}}"

@@ -15,7 +15,7 @@ Traditional doc tools either require a Node/Python runtime or scatter their conf
 
 ## Core features
 
-- **CLI**: `build` / `serve` / `new` / `version` / `help` subcommands
+- **CLI**: `init` / `new` / `section` / `build` / `serve` / `deploy` / `clean` + diagnostics `doctor` / `check` / `config` / `routes`
 - **Content**: Markdown (md4c based, with GFM extensions: tables, task lists, strikethrough)
 - **Navigation**: config-driven sidebar, up to 6 nesting levels, collapsible groups, mobile drawer
 - **Search**: client-side full-text search (FlexSearch) with title/body fields and hit highlighting

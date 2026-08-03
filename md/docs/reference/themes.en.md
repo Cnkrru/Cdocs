@@ -1,24 +1,32 @@
 # Theme Development
 
-A Cdocs **theme is a folder**. The engine only generates data (nav tree, TOC, body, pager…); the page skeleton and all front-end assets come from the theme. Copy a theme folder, tweak a few lines, and the whole look changes — this is Cdocs' theme contract, and the integration point for a future theme ecosystem.
+A Cdocs **theme is a folder**. The engine produces data (nav tree, TOC, body, pager…); page structure is described by **JSON maps**, page elements are provided by **components**, and the look & feel is carried by **theme variables + component-embedded styles**. Copy a theme folder, tweak a few config keys — the whole skin changes. That is the theme contract (and the future ecosystem entry point).
 
 ## Directory layout
 
-The theme lives under the engine directory: `.Cdocs/theme/`. The default "ink" (ink-wash) theme ships with every site:
+The theme lives under the engine dir: `.Cdocs/theme/` — shipped with the built-in "ink" theme:
 
 ```
 .Cdocs/theme/
-├── theme.json                 # Theme metadata (required)
-├── templates/
-│   └── layout.html            # Page skeleton (placeholder injection, required)
-└── assets/                    # Front-end assets (copied verbatim to dist/assets/)
-    ├── css/                   #   style.css / custom.css / pswp-theme.css
+├── theme.json                 # theme metadata (name/version/description…)
+├── map/                       # page maps: one JSON per page type (core!)
+│   ├── home.json              #   home page
+│   ├── doc.json               #   doc page
+│   ├── blog.json              #   blog list page
+│   ├── blog-post.json         #   blog detail page
+│   ├── tags.json / tag-page.json / 404.json …
+│   └── base.json              #   shared skeleton (extended by pages)
+├── components/                # components: page elements & body shortcodes
+│   ├── header/                #   header family (topbar/logo/nav/search…)
+│   ├── footer/                #   footer family
+│   ├── center/                #   body area family (sidebar/toc/pager/cards…)
+│   └── shortcodes/            #   body shortcodes (<Tabs/> <Expand/> <Badge/>…)
+└── assets/                    # front-end assets (copied verbatim into dist/assets/)
+    ├── css/                   #   style.css (theme variables + shared styles)
     ├── js/                    #   app.js entry + core/ + features/ (ESM modules)
     ├── pwa/                   #   sw.js + icon.svg (PWA offline)
     └── icons/                 #   inline SVG icons
 ```
-
-> **Legacy compat**: older versions kept `assets/` and `templates/` directly under `.Cdocs/`. The builder prefers `.Cdocs/theme/` and falls back to the old locations, so existing sites build unchanged.
 
 ## theme.json — metadata
 
@@ -26,82 +34,76 @@ The theme lives under the engine directory: `.Cdocs/theme/`. The default "ink" (
 {
   "name": "ink",
   "version": "1.0.0",
-  "description": "Cdocs default theme (ink-wash style: rice paper + vermilion + night ink)",
+  "description": "Cdocs default theme (ink wash: rice-paper white + cinnabar red + night ink)",
   "author": "Cdocs",
-  "license": "MIT",
-  "assets": "assets",
-  "templates": "templates"
+  "license": "MIT"
 }
 ```
 
-| Field | Required | Meaning |
+| Field | Required | Notes |
 | --- | --- | --- |
-| `name` | ✔ | Theme name (lowercase letters / digits / hyphens) |
-| `version` |  | Semver, e.g. `1.0.0` |
-| `description` |  | One-line intro shown to users |
-| `author` / `license` |  | Author & license (MIT recommended for ecosystem spread) |
-| `assets` / `templates` |  | Sub-directory names, default `assets` / `templates` |
+| `name` | ✔ | theme name (lowercase letters/digits/hyphens) |
+| `version` |  | theme version, semantic `x.y.z` recommended |
+| `description` |  | one-line intro |
+| `author` / `license` |  | author & license (MIT recommended for ecosystem) |
 
-## templates/layout.html — page skeleton
+## map/ — page maps (JSON-driven, the theme core)
 
-The builder splits each page into **data blocks** and injects them into the template via `{{key}}` placeholders. Everything else in the template is kept verbatim.
+**One JSON file per page type**; a page = an ordered list of "sections". Maps are registered by `config/map.json` (`maps` array: `{type, map}`) and support `extends` inheritance (`base.json` defines the shared skeleton; child maps expand via `{"slot": X}`).
 
-### Placeholder reference
+Five section kinds:
 
-| Placeholder | Kind | Meaning |
-| --- | --- | --- |
-| `{{lang}}` | scalar | Current locale (`zh-CN` / `en`) |
-| `{{theme}}` | scalar | Theme (light/dark, from config or user preference) |
-| `{{title}}` | scalar | Page title |
-| `{{base}}` | scalar | Prefix to site root (used by subdirectory sites, usually `./`) |
-| `{{body_class}}` | scalar | Extra `<body>` classes (e.g. `no-sidebar` on home) |
-| `{{meta_desc}}` | inline | `<meta>` description |
-| `{{highlight_css}}` | inline | Code-highlight CSS (empty when disabled) |
-| `{{custom_head}}` | inline | Custom `<head>` injection |
-| `{{skip_link}}` | line-end | Accessible "skip to content" link |
-| `{{header}}` | line-end | Header (logo / search / locale / GitHub / theme toggle) |
-| `{{left_nav}}` | inline | Left sidebar nav tree |
-| `{{breadcrumb}}` | inline | Breadcrumb |
-| `{{body}}` | inline | **Main content** (must be present, else built-in fallback) |
-| `{{last_updated}}` | inline | Last-updated timestamp |
-| `{{edit_link}}` | inline | "Edit this page" link |
-| `{{pager}}` | inline | Prev / Next |
-| `{{toc_sidebar}}` | inline | Right TOC (empty when disabled) |
-| `{{footer}}` | line-end | Footer |
-| `{{back_to_top}}` | line-end | Back-to-top button |
-| `{{highlight_js}}` | line-end | Highlight JS |
-| `{{search_js}}` | line-end | Search library JS |
-| `{{i18n_json}}` | line-end | Client i18n dict (`window.__I18N__`) |
-| `{{feedback_js}}` | line-end | Feedback button data |
+| Kind | Effect |
+| --- | --- |
+| `{ "html": "…" }` | static HTML fragment, output verbatim (may contain data holes like `{{lang}}`) |
+| `{ "component": "Name" }` | render component `components/**/<Name>.html` |
+| `{ "component": "Name", "if": "path" }` | render only when the data path is truthy |
+| `{ "component": "Name", "each": "path" }` | loop over an array (each item merged into the data scope) |
+| `{ "component": "Name", "sections": […], "props": {…} }` | sub-sections rendered into the component's `{{slot}}`; props passed in (highest priority) |
 
-### Layout rules
+Data-scope priority: **global page data < each item < props**.
 
-Three conventions keep the output HTML clean:
+> Design note: map JSON has no "syntax" — conditionals, loops and nesting are plain JSON fields; components themselves are pure HTML + data holes with no control flow. Page structure = data + component composition; C++ hardcodes no page skeleton.
 
-1. **Scalar** placeholders can go anywhere; **inline** blocks carry a trailing newline — place them at line start;
-2. **Line-end** blocks (`skip_link` / `header` / `footer` / `back_to_top` / JS blocks) **must sit on their own line ending with the placeholder** — the renderer strips the trailing newline and the template line supplies it;
-3. The **content row** (`breadcrumb` / `body` / `last_updated` / `edit_link` / `pager`) should share one line so empty blocks produce no blank lines.
+## components/ — structure + style + interaction in one file
 
-> Unknown `{{key}}`s (e.g. i18n keys like `{{navIntro}}`) are kept **verbatim** and resolved later by i18n — the template does not need to care.
+A component is one HTML file that may embed `<style>` and `<script>`, fully self-contained:
 
-## assets/ — front-end assets
+```html
+<!-- components/center/Card.html -->
+<a class="card" href="{{href}}"><h3>{{title}}</h3>{{slot}}</a>
+<style>
+  .card { border: 1px solid var(--border); border-radius: var(--radius); … }
+  .card:hover { border-color: var(--accent); … }
+</style>
+```
 
-The whole `assets/` directory is copied verbatim into each locale's `dist/<loc>/assets/`. Therefore:
+- **Data holes** `{{field}}` / `{{slot}}` / `{{a.b.c}}` are filled by the engine (missing ones stay verbatim and warn);
+- **Componentized styles**: styles live inside the component file — copying a component carries its full styling (including dual-theme variable adaptation);
+- **Component icons**: rules containing `url()` (resolved relative to the theme asset dir) stay in `style.css` — embedded styles cannot host them;
+- **Body shortcodes**: components under `components/shortcodes/` can be called from the body with `<Component/>` tags (see the [shortcode reference](./shortcodes)).
 
-- `css/style.css` → `dist/<loc>/assets/css/style.css` (referenced as `{{base}}assets/css/style.css`);
-- **Incremental skip**: the builder records an mtime signature of assets and skips copying when unchanged (a big win on large sites);
-- Runtime JS libs (Mermaid / KaTeX / PhotoSwipe / FlexSearch…) live in `.Cdocs/deps/` and are copied to `assets/deps/` — they are **not** part of a theme; themes own css/js/icons/pwa only.
+## assets/ — front-end assets & theme variables
+
+`assets/` is copied verbatim into `dist/<loc>/assets/`. The visual contract lives in `css/style.css` CSS variables:
+
+- `:root` / `[data-theme="light"]` define light-mode variables (`--bg` rice-paper white / `--accent` cinnabar / `--info` indigo…);
+- `[data-theme="dark"]` overrides for dark mode (night ink);
+- components and page styles reference variables only — **re-skin by changing variables**;
+- `config.site.themeVars` can override public variables; `config.site.customCss` appends custom styles (dual-theme shared overlay).
 
 ### JS entry convention
 
-`assets/js/app.js` only bootstraps and dynamically `import('./main.js')` to load the ESM graph. Themes may freely reorganize `main.js` and its deps, but the **entry file name `app.js` and its reference path must stay** (the page template hard-codes `{{base}}assets/js/app.js`).
+`assets/js/app.js` only bootstraps: `import('./main.js')` loads the ESM module graph. Interaction enhancements (theme / code / callouts / diagrams / search / command palette / lightbox / PWA) are `initX()` modules under `features/*.js` — **add front-end features without touching the C++ generator**.
 
-## Make a new theme
+> Note: Mermaid / KaTeX are lazy client-side upgrades; Admonitions (`> [!type]`) and shortcode components are **build-time rendered** (directly visible in the static HTML).
 
-1. Copy `.Cdocs/theme/` to `.Cdocs/theme-my/` (or a standalone site);
-2. Edit `theme.json` (name/version/description…);
-3. Edit `templates/layout.html` to change page structure;
-4. Edit `assets/css/style.css` and `assets/js/` to restyle;
+## How to make a new theme
+
+1. Copy `.Cdocs/theme/` to `.Cdocs/theme-my/`;
+2. Edit `theme.json` (name/version/description);
+3. Edit `map/*.json` to reshape page structure (component composition);
+4. Edit `components/` and `assets/css/style.css` for visuals;
 5. `Cdocs build` to preview; `Cdocs serve -o --watch` for hot reload.
 
-> Tip: theme CSS variables (`--accent` / `--bg` / `--fg` …) are defined in `style.css` under `:root`. To re-color, override the variables instead of editing every rule.
+> Tip: want a new page type (e.g. "showcase")? Add `{type, map}` to the `maps` array in `config/map.json`, then write `theme/map/<type>.json` — no C++ changes needed.

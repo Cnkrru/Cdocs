@@ -14,7 +14,7 @@ flowchart LR
   G --> DIST["dist/ 纯静态（HTML · SEO · RSS · PWA · search.json）"]
 ```
 
-## 生成器：13 个 C++ 模块
+## 生成器：20 个 C++ 模块
 
 生成器源码在 `src/`，按职责拆成模块（每个含 `.hpp` + `.cpp`），依赖方向严格向下：
 
@@ -30,9 +30,19 @@ flowchart LR
 | 领域 | `pwa` | manifest + service worker |
 | 领域 | `search` | search.json 索引 |
 | 领域 | `server` | 内置 HTTP 预览 + 文件 watch |
-| 编排 | `cli` | 全局旗标解析 / 子命令分发 / 帮助 / 退出码 |
-| 编排 | `builder` | `run_build` 编排 + `init`/`add`/`clean` |
-| 渲染 | `markdown` | md4c 封装（Markdown → HTML，早期独立） |
+| 领域 | `linkcheck` | 死链检查（构建期扫描站内链接） |
+| 领域 | `compress` | 构建期压缩（WebP 图片 + HTML/CSS） |
+| 领域 | `deploy` | git 推送 / Vercel / 自动化部署配置生成 |
+| 领域 | `plugin` | 外部脚本钩子（on_config / on_done …） |
+| 渲染 | `markdown` | md4c 封装 + Admonitions 展开 |
+| 渲染 | `component` | 组件加载 / 数据孔填充 / 地图 sections 组合 / 站点数据 |
+| 渲染 | `shortcode` | 正文 shortcode 引擎（预扫描 / 展开 / style 去重 / 转义） |
+| 构建 | `builder` | `run_build` 纯编排（配置→收集→渲染→收尾产物） |
+| 脚手架 | `scaffold` | `init` / `section` / `new` / `clean` 站点骨架命令 |
+| 编排 | `cli` | 命令注册表分发 / 统一 flag 解析 / 帮助 / 退出码 |
+| 诊断 | `diag` | `doctor` / `check` / `config` / `routes` 诊断命令 |
+
+> 演进：早期把渲染部件与脚手架命令都堆在 `builder.cpp`（一度 3200 行）；v2 拆出 `component` / `shortcode` / `scaffold` / `diag` 四个内聚子系统，`builder` 只留构建编排。
 
 ## run_build：纯编排
 
@@ -51,12 +61,12 @@ flowchart LR
 
 `assets/app.js` 只做一件事：动态 `import('./js/main.js')` 加载 ESM 模块图。交互增强（主题 / 代码块 / 提示框 / 图表 / 搜索 / 命令面板 / 灯箱 / PWA）都是 `features/*.js` 里的 `initX()` 模块——**无需修改 C++ 生成器即可加前端功能**。
 
-> 重要约定：Admonitions（`> [!type]`）、Mermaid、KaTeX 都是**客户端 JS 升级**，静态 HTML 里看不到 `class="admonition"` 是**正常的**。
+> 约定：Admonitions（`> [!type]`）与 shortcode 组件是**构建期渲染**，静态 HTML 里直接可见；Mermaid、KaTeX 是**客户端 JS 懒加载升级**。
 
 ## 构建链：两步，零依赖
 
 ```text
-build.cmd → ① 编译 13 个 C++ 源（g++ -std=c++17）+ 3 个 vendor C 源（md4c，用 gcc）
+build.cmd → ① 编译 20 个 C++ 源（g++ -std=c++17）+ 3 个 vendor C 源（md4c，用 gcc）
            → ② Cdocs.exe build 生成完整 dist/（RSS / Feed / PWA / SEO 全内建）
 ```
 

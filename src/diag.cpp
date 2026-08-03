@@ -157,38 +157,8 @@ int cmd_check() {
     }
     std::cout << cyan("检查输出目录 ") << g_dest << "\n\n";
 
-    // 1) 死链检查（每语言目录）
-    int locales = 0, broken = 0;
-    for (const auto& it : fs::directory_iterator(g_dest, ec)) {
-        if (!it.is_directory(ec)) continue;
-        std::string loc = it.path().filename().string();
-        if (loc == "assets" || loc == "deps" || loc == "icons") continue;
-        check_links(it.path(), loc);
-        ++locales;
-    }
-    broken = (int)g_link_broken.size();
-    if (broken > 0) {
-        for (const auto& b : g_link_broken) std::cerr << warn("  死链: ") << b << "\n";
-    }
-    print_row("死链检查", std::to_string(locales) + " 个语言目录，" + std::to_string(broken) + " 条死链", broken == 0);
-
-    // 2) token / 数据孔残留扫描
-    int leftovers = 0;
-    std::vector<std::string> samples;
-    for (const auto& it : fs::recursive_directory_iterator(g_dest, ec)) {
-        if (!it.is_regular_file(ec) || it.path().extension() != ".html") continue;
-        std::string html = read_file(it.path());
-        if (html.find("@@CDOCS_SC_") != std::string::npos) {
-            ++leftovers; if (samples.size() < 5) samples.push_back(it.path().string());
-        }
-    }
-    if (leftovers > 0)
-        for (const auto& s : samples) std::cerr << warn("  token 残留: ") << s << "\n";
-    print_row("组件 token 残留", leftovers == 0 ? "无" : (std::to_string(leftovers) + " 个文件"), leftovers == 0);
-
-    // 3) 未渲染数据孔（{{xxx}} 仍以 {{ 形式出现在页面正文）
-    //    先剥离 <script>/<style>/<pre>/<code> 保护块：i18n 字典的 {{minutes}} 是 JS 运行时
-    //    占位符、代码示例里的 {{}} 是文档内容，均非引擎未渲染标记。
+    // 剥离保护块（script/style/pre/code）：i18n 字典的 {{minutes}} 是 JS 运行时占位符、
+    // 代码示例里的 {{}} 与占位 token 字样是文档内容，均非引擎未渲染标记。
     const char* protTags[] = { "script", "style", "pre", "code" };
     auto strip_blocks = [&](std::string html) {
         for (const char* tg : protTags) {
@@ -207,6 +177,37 @@ int cmd_check() {
         }
         return html;
     };
+
+    // 1) 死链检查（每语言目录）
+    int locales = 0, broken = 0;
+    for (const auto& it : fs::directory_iterator(g_dest, ec)) {
+        if (!it.is_directory(ec)) continue;
+        std::string loc = it.path().filename().string();
+        if (loc == "assets" || loc == "deps" || loc == "icons") continue;
+        check_links(it.path(), loc);
+        ++locales;
+    }
+    broken = (int)g_link_broken.size();
+    if (broken > 0) {
+        for (const auto& b : g_link_broken) std::cerr << warn("  死链: ") << b << "\n";
+    }
+    print_row("死链检查", std::to_string(locales) + " 个语言目录，" + std::to_string(broken) + " 条死链", broken == 0);
+
+    // 2) token / 数据孔残留扫描（跳过 script/style/pre/code 保护块：教学文档会展示占位 token 字样）
+    int leftovers = 0;
+    std::vector<std::string> samples;
+    for (const auto& it : fs::recursive_directory_iterator(g_dest, ec)) {
+        if (!it.is_regular_file(ec) || it.path().extension() != ".html") continue;
+        std::string html = strip_blocks(read_file(it.path()));
+        if (html.find("@@CDOCS_SC_") != std::string::npos) {
+            ++leftovers; if (samples.size() < 5) samples.push_back(it.path().string());
+        }
+    }
+    if (leftovers > 0)
+        for (const auto& s : samples) std::cerr << warn("  token 残留: ") << s << "\n";
+    print_row("组件 token 残留", leftovers == 0 ? "无" : (std::to_string(leftovers) + " 个文件"), leftovers == 0);
+
+    // 3) 未渲染数据孔（{{xxx}} 仍以 {{ 形式出现在页面正文）
     int holes = 0;
     std::vector<std::string> holeSamples;
     for (const auto& it : fs::recursive_directory_iterator(g_dest, ec)) {
