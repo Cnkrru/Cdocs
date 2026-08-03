@@ -13,7 +13,16 @@ int cmd_check();
 // config：打印解析后的配置摘要（诊断用）
 int cmd_config();
 
-// routes：列出站点页面路由清单（sidebar 登记 → 输出 URL）
+// routes：列出站点页面路由清单（route 登记 → 输出 URL）
 int cmd_routes();
+
+// theme：列出可用主题（themes/ 目录）+ 当前生效主题
+int cmd_theme();
+
+// plugins：列出已注册插件（.Cdocs/plugins/）+ 各自钩子
+int cmd_plugins();
+
+// versions：列出配置的版本（site.versions；未配置时扫描 md-* 快照约定）
+int cmd_versions();
 
 #endif  // CDOCS_DIAG_HPP

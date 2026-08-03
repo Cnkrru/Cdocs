@@ -24,7 +24,7 @@ Cdocs [全局旗标] <子命令> [参数]
 |--------|------|----------|
 | `init <目录>` | **建站**：生成完整骨架（配置/i18n/示例文档/引擎+exe），自动构建 | `--no-engine` 只出内容骨架；`--defaults`/`-y` 跳过交互 |
 | `new <名>`（别名 `add`/`page`） | **建页**：用 archetype 生成文档并登记导航 | — |
-| `section <blog\|docs\|md-v<n>>` | **加内容区**：添加分类（blog/docs 唯一，版本可多个） | — |
+| `section <blog\|docs\|docs-v<n>>` | **加内容区**：添加分类（blog/docs 唯一，历史版本 docs-v<n>） | — |
 | `build` | 构建站点（位置参数可覆盖输入/输出目录） | `-D/--drafts`、`--clean`、`-q/-V` |
 | `serve` | 构建并启动内置 HTTP 预览（默认 8088，端口被占自动顺延） | `-p/--port`、`-o/--open`、`-w/--watch`、`--no-build` |
 | `deploy` | 构建并发布（gh-pages 分支推送 / Vercel） | `--remote <url>`、`--branch <b>`、`-m <msg>`、`--force`、`--vercel`、`--setup` |
@@ -32,7 +32,10 @@ Cdocs [全局旗标] <子命令> [参数]
 | `doctor` | **环境自检**：config/内容区/主题/工具探测 | — |
 | `check` | **质量检查**：死链 + 组件 token 残留 + 未渲染数据孔（跳过 script/pre/code 保护块） | — |
 | `config` | 打印解析后的配置摘要（诊断用） | — |
-| `routes` | 列出 sidebar 登记的页面路由清单 | — |
+| `routes` | 列出 route 登记的页面路由清单 | — |
+| `theme` | 列出可用主题（themes/ 目录）+ 当前生效主题 | — |
+| `plugins` | 列出已注册插件（.Cdocs/plugins/）+ 各自钩子 | — |
+| `versions` | 列出配置的版本（site.versions；未配置时扫描 md-* 快照约定） | — |
 | `version` / `help [命令]` | 版本 / 帮助（可指定命令查看子帮助） | — |
 
 ## 退出码
@@ -65,6 +68,9 @@ Cdocs -d /tmp/out build       # 输出到指定目录
 Cdocs serve -o -w -p 3000     # 预览 + 开浏览器 + 热重载 + 3000 端口
 Cdocs doctor                  # 环境自检
 Cdocs check                   # 质量检查（死链/token/数据孔）
+Cdocs theme                   # 列出可用主题 + 当前主题
+Cdocs plugins                 # 列出已注册插件 + 钩子
+Cdocs versions                # 列出配置的版本
 Cdocs config                  # 配置摘要
 Cdocs routes                  # 页面路由清单
 Cdocs clean                   # 清空 dist

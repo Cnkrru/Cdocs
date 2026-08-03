@@ -3,6 +3,8 @@
 #include "builder.hpp"
 #include "component.hpp"
 #include "shortcode.hpp"
+#include "versions.hpp"
+#include "output.hpp"
 #include "frontmatter.hpp"
 #include "i18n.hpp"
 #include "pages.hpp"
@@ -257,24 +259,7 @@ static json footer_json(const SiteConfig& cfg) {
 // 让 run_build 退化为纯编排：每个阶段函数只需一份上下文，不再传递超长参数列表。
 // 阶段函数体用局部引用别名（如 SiteConfig& cfg = b.cfg;）绑定上下文成员，
 // 因此函数体与重构前 run_build 内联时逐字一致，行为零变化。
-struct BuildContext {
-    fs::path in_dir;
-    fs::path out_dir;
-    bool includeDrafts = false;
-    SiteConfig cfg;
-    I18nCfg i18n;
-    I18nDict fallbackUI;
-    RenderOpts opt;
-    std::vector<Page> pages;
-    std::vector<Page> blog_posts;          // 博客流：md/blog/ 收集的文章（按 date 倒序）
-    std::vector<NavNode> blogNav;          // 博客区独立侧边栏（config.sidebar["blog"]；空 = 沿用文档导航）
-    json query_out;                        // on_data_query 插件输出：blog_order / blog_pages / home_posts / tags / tag_pages
-    bool query_ready = false;              // 插件已产出查询结果（false = 无查询 → 纯文档站，无博客/标签功能）
-    // ---- 增量构建状态（--watch 热重载加速；普通 build 全量） ----
-    bool incremental = false;              // 本次构建是否启用增量（serve -w 置位）
-    std::map<std::string, std::string> pageSig;  // file+loc -> "mtime:size"（源 .md 指纹）
-    bool globalDirty = true;               // 配置/导航/i18n/模板任一变化 → 全量重建
-};
+
 
 // ---------------- 构建阶段（run_build 的拆分，file-local） ----------------
 
@@ -820,6 +805,667 @@ static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
 }
 
 // 3) 多语言构建循环：每个语言输出到独立子目录（未开启 i18n 时单语言输出到根）
+// 按 mode 查找第一个匹配的页面类型名（找不到返回默认名，保持旧行为）
+static std::string type_for_mode(const json& maps, const std::string& mode, const std::string& def) {
+    if (maps.is_array())
+        for (const auto& e : maps)
+            if (e.is_object() && e.value("mode", "") == mode) return e.value("type", def);
+    return def;
+}
+
+static void render_one_locale(BuildContext& b, const json& maps, const std::string& loc,
+                         bool multi, const I18nDict& dict, std::time_t asig, bool assetsChanged) {
+    const SiteConfig& cfg = b.cfg;
+    const I18nCfg& i18n = b.i18n;
+    const I18nDict& fallbackUI = b.fallbackUI;
+    std::vector<Page>& pages = b.pages;   // 博客流可能回退 dateT（mtime）
+    const fs::path& out_dir = b.out_dir;
+    fs::path in_dir = b.in_dir;                 // 静态资源发布源（md/ 下非 Markdown 文件）
+    const RenderOpts& opt = b.opt;              // 渲染选项（压缩/指纹/地图渲染）
+    const bool includeDrafts = b.includeDrafts;
+    std::error_code ec;
+    std::string i18nJson = dict_to_json(dict);   // 注入页面，供 app.js 客户端文案本地化
+    std::string curLocale = loc;                 // 空 = 单语言（render_page 退化为 zh-CN）
+    fs::path locOut = out_dir;
+    if (multi) locOut = out_dir / loc;
+    fs::create_directories(locOut, ec);
+    // 复制前端资源到本语言目录（相对链接 assets/... 在子目录内同样成立）
+    // 源签名变化或目标缺失 → 复制；40 个字体 ×2 语言是构建最大 I/O 大头，多数构建命中跳过。
+    bool needAssets = assetsChanged || !fs::exists(locOut / "assets");
+    if (g_verbose && !needAssets)
+        std::cout << color::muted("  [incr] 跳过 assets 复制（源未变）\n");
+    if (needAssets) {
+        if (fs::exists(theme_root() / "assets"))
+            fs::copy(theme_root() / "assets", locOut / "assets", fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+        else
+            fs::create_directories(locOut / "assets", ec);
+        // 复制前端运行时依赖（deps/ 中的 JS·CSS 库）到 assets/deps
+        // 注意：deps/vendor 是 C++ 编译期头文件（md4c / nlohmann），不属于站点运行资源，不随站点发布
+        if (fs::exists(g_engine / "deps")) {
+            fs::create_directories(locOut / "assets" / "deps", ec);
+            for (const auto& e : fs::directory_iterator(g_engine / "deps")) {
+                if (e.path().filename() == "vendor") continue;   // 编译期依赖，跳过发布
+                fs::copy(e.path(), locOut / "assets" / "deps" / e.path().filename(),
+                         fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+            }
+        }
+    }
+
+    // 静态资源发布：md/ 下图片/附件等非 Markdown 文件，按相对路径拷到本语言目录
+    copy_doc_assets(in_dir, locOut, ec);
+
+    // 构建期压缩（默认开启，config site.compress=false 可关）：
+    // 1) 图片：stb_image + libwebp 生成 WebP 副本（原图保留，页面 <picture> 优先 WebP）；
+    // 2) CSS：主题 css/ 保守紧凑化（去注释 + 折叠空白，无收益则不动）。
+    if (cfg.compress) {
+        int nWebp = webpize_dir(locOut, cfg.jpegQuality);
+        if (g_verbose && nWebp > 0)
+            std::cout << color::muted("  [compress] 生成 " + std::to_string(nWebp) + " 个 WebP 副本\n");
+        compress_dir_css(locOut / "assets" / "css");
+    }
+    // 资源指纹（cache busting）：对主题 css/js 计算内容哈希，页面引用与 sw 缓存同步加 ?v=
+    if (assetsChanged || g_fp.empty() || !fs::exists(locOut / "assets" / "css"))
+        fingerprint_assets(locOut / "assets");
+
+    // 语言切换器（仅多语言模式）：链接到兄弟语言的 index.html
+    json langData = json{{"show", false}, {"current", ""}, {"items", json::array()}};
+    if (multi) {
+        // 语言切换数据（地图模式 LangSwitch/LangItem 组件渲染；href 的 relBase 前缀由 map_render_page 修正）
+        langData["show"] = true;
+        langData["current"] = i18n.labels.count(loc) ? i18n.labels.at(loc) : loc;
+        langData["items"] = json::array();
+        for (auto& kv : i18n.labels)
+            if (kv.first != loc)
+                langData["items"].push_back(json{{"label", kv.second},
+                                                 {"href", "../" + kv.first + "/index.html"}});
+    }
+
+    // 本语言在站点基址下的前缀（用于 canonical / 交替链接 / 结构化数据）
+    std::string homeBase;
+    if (!cfg.url.empty()) { homeBase = cfg.url; if (!homeBase.empty() && homeBase.back() != '/') homeBase += '/';
+                            if (multi) homeBase += loc + "/"; }
+
+    // 行业标准增强：本语言 RSS / PWA / 社交分享所需的 head 片段与封面图 URL
+    std::string feedTitle = i18n_replace(cfg.title, dict);
+    std::string feedLinkTag = "  <link rel=\"alternate\" type=\"application/rss+xml\" title=\""
+                              + esc_attr(feedTitle) + "\" href=\"./rss.xml\">\n";
+    std::string manifestTag = "  <link rel=\"manifest\" href=\"./manifest.webmanifest\">\n"
+                              "  <meta name=\"theme-color\" content=\"#a8332a\">\n";
+    std::string ogImageUrl;
+    if (!cfg.ogImage.empty() && !cfg.url.empty()) {
+        ogImageUrl = cfg.url;
+        if (ogImageUrl.back() != '/') ogImageUrl += '/';
+        std::string rel = cfg.ogImage;
+        if (!rel.empty() && rel.front() == '/') rel = rel.substr(1);   // 去掉开头 /，避免双斜杠
+        if (rel.compare(0, 4, "http") == 0) ogImageUrl = rel;
+        else ogImageUrl += rel;
+    }
+
+    // hreflang 交替链接（i18n 标准 SEO）：指向其他语言同一页面 + x-default。
+    // url 配置时用绝对地址；url 为空时用相对路径，需按页面深度加 ../ 前缀
+    // （子目录页如 guide/install 在 zh-CN/guide/，兄弟语言在 ../../en/...）。
+    // head 数据化（地图模式 MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）。
+    // canonical/prev/next/hreflang/RSS/manifest → links；OG/Twitter/theme-color → meta；
+    // JSON-LD → jsonld 字符串。fallback 仍用 headExtra 字符串（双轨并行）。
+    auto build_head_data = [&](const std::string& file, int depth,
+                               const std::string& title, const std::string& desc,
+                               std::time_t published, std::time_t modified,
+                               bool article, const std::vector<std::string>& crumbs,
+                               const std::string& prevFile, const std::string& nextFile) {
+        json hd = json::object();
+        hd["meta"] = json{{"desc", desc}};
+        hd["meta"]["og"] = json::array();
+        hd["meta"]["names"] = json::array();
+        hd["links"] = json::array();
+        std::string up;
+        for (int k = 0; k < depth + 1; ++k) up += "../";
+        if (!cfg.url.empty()) {
+            std::string u = homeBase;
+            hd["links"].push_back(json{{"rel", "canonical"}, {"href", u + file + ".html"}, {"attrs", ""}});
+            if (!prevFile.empty()) hd["links"].push_back(json{{"rel", "prev"}, {"href", u + prevFile + ".html"}, {"attrs", ""}});
+            if (!nextFile.empty()) hd["links"].push_back(json{{"rel", "next"}, {"href", u + nextFile + ".html"}, {"attrs", ""}});
+            if (i18n.enabled) {
+                for (auto& kv : i18n.labels) {
+                    if (kv.first == loc) continue;
+                    std::string ou;
+                    if (cfg.url.empty()) ou = up + kv.first + "/" + file + ".html";
+                    else { ou = cfg.url; if (!ou.empty() && ou.back() != '/') ou += '/'; ou += kv.first + "/" + file + ".html"; }
+                    hd["links"].push_back(json{{"rel", "alternate"}, {"href", ou}, {"attrs", " hreflang=\"" + kv.first + "\""}});
+                }
+                std::string du;
+                if (cfg.url.empty()) du = up + i18n.defaultLocale + "/" + file + ".html";
+                else { du = cfg.url; if (!du.empty() && du.back() != '/') du += '/'; du += i18n.defaultLocale + "/" + file + ".html"; }
+                hd["links"].push_back(json{{"rel", "alternate"}, {"href", du}, {"attrs", " hreflang=\"x-default\""}});
+            }
+            // JSON-LD：文章页 → BreadcrumbList；首页 → WebSite
+            if (article) {
+                std::ostringstream items;
+                int pos = 1;
+                items << "{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
+                      << esc_attr(i18n_replace("{{home}}", dict)) << "\",\"item\":\""
+                      << homeBase << "index.html\"}";
+                for (const auto& c : crumbs)
+                    items << ",{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
+                          << esc_attr(i18n_replace(c, dict)) << "\"}";
+                items << ",{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
+                      << esc_attr(i18n_replace(title, dict)) << "\",\"item\":\"" << homeBase << file << ".html\"}";
+                hd["jsonld"] = "{\"@context\":\"https://schema.org\",\"@type\":\"BreadcrumbList\",\"itemListElement\":["
+                               + items.str() + "]}";
+            } else {
+                hd["jsonld"] = "{\"@context\":\"https://schema.org\",\"@type\":\"WebSite\",\"name\":\""
+                               + esc_attr(i18n_replace(cfg.title, dict)) + "\",\"url\":\"" + homeBase + "index.html\"}";
+            }
+        } else hd["jsonld"] = "";
+        // RSS + PWA manifest + theme-color（RSS/manifest 用 depth 层 ../；hreflang 用 depth+1 层上级语言目录）
+        std::string upRss;
+        for (int k = 0; k < depth; ++k) upRss += "../";
+        hd["links"].push_back(json{{"rel", "alternate"}, {"href", upRss + "rss.xml"},
+                                   {"attrs", " type=\"application/rss+xml\" title=\"" + esc_attr(feedTitle) + "\""}});
+        hd["links"].push_back(json{{"rel", "manifest"}, {"href", upRss + "manifest.webmanifest"}, {"attrs", ""}});
+        hd["meta"]["names"].push_back(json{{"name", "theme-color"}, {"content", "#a8332a"}});
+        // OG / Twitter（social_head 数据化；摘要去标题前缀）
+        std::string d = desc;
+        size_t pp = 0;
+        while (pp < d.size() && (d[pp] == ' ' || d[pp] == '\t' || d[pp] == '\n' || d[pp] == '\r')) ++pp;
+        if (!title.empty() && d.compare(pp, title.size(), title) == 0) {
+            pp += title.size();
+            while (pp < d.size() && (d[pp] == ' ' || d[pp] == '\t' || d[pp] == '\n' || d[pp] == '\r')) ++pp;
+            d = d.substr(pp);
+        }
+        std::string ogUrl = cfg.url.empty() ? std::string() : homeBase + file + ".html";
+        if (!ogUrl.empty()) hd["meta"]["og"].push_back(json{{"property", "og:url"}, {"content", ogUrl}});
+        hd["meta"]["og"].push_back(json{{"property", "og:type"}, {"content", article ? "article" : "website"}});
+        hd["meta"]["og"].push_back(json{{"property", "og:title"}, {"content", title}});
+        if (!d.empty()) hd["meta"]["og"].push_back(json{{"property", "og:description"}, {"content", d}});
+        if (!cfg.url.empty() && !cfg.title.empty())
+            hd["meta"]["og"].push_back(json{{"property", "og:site_name"}, {"content", cfg.title}});
+        if (!loc.empty()) hd["meta"]["og"].push_back(json{{"property", "og:locale"}, {"content", loc}});
+        if (!ogImageUrl.empty()) hd["meta"]["og"].push_back(json{{"property", "og:image"}, {"content", ogImageUrl}});
+        if (article) {
+            if (published) hd["meta"]["og"].push_back(json{{"property", "article:published_time"}, {"content", iso8601(published)}});
+            if (modified)  hd["meta"]["og"].push_back(json{{"property", "article:modified_time"}, {"content", iso8601(modified)}});
+        }
+        hd["meta"]["names"].push_back(json{{"name", "twitter:card"}, {"content", ogImageUrl.empty() ? "summary" : "summary_large_image"}});
+        hd["meta"]["names"].push_back(json{{"name", "twitter:title"}, {"content", title}});
+        if (!d.empty()) hd["meta"]["names"].push_back(json{{"name", "twitter:description"}, {"content", d}});
+        if (!ogImageUrl.empty()) hd["meta"]["names"].push_back(json{{"name", "twitter:image"}, {"content", ogImageUrl}});
+        return hd;
+    };
+    // 6) 首页（maps 注册表 mode=home；isHome 标记页眉/移动端一致；无左侧边栏）
+    // 首页 → PageCtx（hero/cards 数据由 Hero/Cards 组件渲染）
+    {
+        PageCtx ctx;
+        ctx.is_home = true;
+        ctx.hero = json{{"title", cfg.homeTitle.empty() ? cfg.title : cfg.homeTitle},
+                        {"subtitle", cfg.homeSubtitle.empty() ? cfg.description : cfg.homeSubtitle}};
+        std::string ctaFile = cfg.homeCtaFile;
+        std::string ctaText = cfg.homeCtaText.empty() ? std::string("{{getStarted}}") : cfg.homeCtaText;
+        if (ctaFile.empty() && !pages.empty()) ctaFile = pages[0].file;
+        if (!ctaFile.empty()) {
+            ctx.hero["cta_href"] = ctaFile + ".html";
+            ctx.hero["cta_text"] = ctaText;
+        }
+        ctx.cards = cards_json(cfg, pages);
+        // 博客流注入首页（插件 home_posts 决定取哪些；引擎只做渲染数据映射）
+        if (b.query_ready && b.query_out.contains("home_posts") && b.query_out["home_posts"].is_array()
+            && !b.query_out["home_posts"].empty()) {
+            json posts = json::array();
+            std::map<std::string, const Page*> pgMap;
+            for (const auto& bp : b.blog_posts) pgMap[bp.file] = &bp;
+            for (const auto& fl : b.query_out["home_posts"]) {
+                auto it = pgMap.find(fl.get<std::string>());
+                if (it == pgMap.end()) continue;
+                const Page& bp = *it->second;
+                posts.push_back(json{{"date", format_date_local(bp.dateT)},
+                                     {"href", "blog/" + bp.file.substr(5) + ".html"},
+                                     {"title", bp.title},
+                                     {"desc", std::string()}});
+            }
+            if (!posts.empty()) ctx.blog_posts = posts;
+        }
+        ctx.title = cfg.title;
+        ctx.desc = cfg.description;
+        ctx.curLocale = curLocale; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
+        // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
+        {
+            json hd = build_head_data("index", 0, cfg.title, cfg.description, 0, 0, false, {}, "", "");
+            ctx.head_meta = hd.value("meta", json::object());
+            ctx.head_links = hd.value("links", json::array());
+            ctx.jsonld = hd.value("jsonld", "");
+        }
+        std::string landing = map_render_page(cfg, opt, ctx, type_for_mode(maps, "home", "home"), true);
+        std::ofstream(locOut / "index.html")
+            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(landing, dict)), locOut) : i18n_replace(landing, dict));
+    }
+
+    // 7) 各文档页（含 TOC 注入 + 上下篇 + i18n）
+    // ---- Hugo 式并发渲染（多核并行）----
+    // 两阶段：①并行渲染正文到内存（写各自 pages[i]，无跨元素竞争）；
+    //         ②并行拼装页面并写盘（pager 需全部页面 title 就绪）。
+    // 有插件注册时退化串行（on_page_rendered 依赖顺序与安全）。
+    bool hasPlugs = plugins_any();
+    std::mutex sigMutex;                       // pageSig 并发读写保护
+    std::vector<char> skip(pages.size(), 0);   // 增量跳过标记（阶段 2 复用）
+    // 阶段 1 产物暂存（并发下各线程只写自己索引，安全；阶段 2 只读自身索引）
+    std::vector<std::string> tocHtml(pages.size()), tocNav(pages.size());
+    std::vector<std::string> metaStore(pages.size());
+    std::vector<json> tocItemsStore(pages.size()),
+                     crumbsMapStore(pages.size()), headDataStore(pages.size());
+    auto render_content = [&](size_t i) {
+        if (pages[i].draft && !includeDrafts) return;   // 草稿默认不发布；-D/--drafts 时包含
+        // 内容翻译：优先 md/<file>.<loc>.md（多语言），否则退回默认 .md（部分翻译）
+        fs::path f = in_dir / (pages[i].file + ".md");
+        if (multi) {
+            fs::path fl = in_dir / (pages[i].file + "." + loc + ".md");
+            if (fs::exists(fl)) f = fl;
+        }
+        if (!fs::exists(f)) { std::cerr << color::error("缺少文件: ") << f << "\n"; return; }
+        // 增量构建：源 .md 指纹（mtime:size）未变且输出已存在 → 跳过渲染复用产物。
+        // 指纹无论全量/增量都记录（全量也更新 .pages.sig，否则下次增量永不命中）。
+        struct stat fst;
+        std::string sig;
+        if (stat(f.string().c_str(), &fst) == 0) {
+            sig = std::to_string(fst.st_mtime) + ":" + std::to_string((long long)fst.st_size);
+            std::string key = pages[i].file + "|" + (multi ? loc : "");
+            if (b.incremental && !b.globalDirty) {
+                fs::path existingOut = locOut / (pages[i].file + ".html");
+                std::lock_guard<std::mutex> lk(sigMutex);
+                auto it = b.pageSig.find(key);
+                if (it != b.pageSig.end() && it->second == sig && fs::exists(existingOut)) {
+                    skip[i] = 1;
+                    if (g_verbose)
+                        std::cout << color::muted("  [incr] 跳过未变化: ") << pages[i].file << "\n";
+                    return;   // 复用已有 HTML，跳过本次渲染
+                }
+                b.pageSig[key] = sig;   // 记录本次指纹（全量/增量一致）
+            } else {
+                std::lock_guard<std::mutex> lk(sigMutex);
+                b.pageSig[key] = sig;
+            }
+        }
+        std::string mdRaw = read_file(f);
+        pages[i].dateT = parse_date_str(pages[i].date);
+        if (!pages[i].dateT) pages[i].dateT = file_mtime_t(f);
+        std::string md;
+        FrontMatter fm = parse_front_matter(mdRaw, md);   // 剥离 front matter，取到正文与元数据
+        pages[i].html  = render_doc_body(md, curLocale == "en");
+        if (pages[i].title.empty()) pages[i].title = extract_title(md, pages[i].file);
+        pages[i].lastmod  = fm.lastmod;
+        pages[i].aliases  = fm.aliases;
+        TocResult toc = build_toc(pages[i].html);
+        tocHtml[i] = toc.html; tocNav[i] = toc.toc;
+        tocItemsStore[i] = toc.items;   // TOC 数据（TocSidebar 组件）
+        std::string excerpt = collapse_ws(strip_tags(pages[i].html));
+        if (excerpt.size() > 160) excerpt = truncate_utf8(excerpt, 160) + "…";
+        pages[i].desc = fm.description.empty() ? excerpt : fm.description;   // front matter 优先
+        // 面包屑：首页 / 祖先分组 / 当前页（当前页不链接）；子目录页首页链接需 ../ 回退
+        std::string up;
+        { size_t pos = 0; int d = 0;
+          while ((pos = pages[i].file.find('/', pos)) != std::string::npos) { ++d; ++pos; }
+          for (int k = 0; k < d; ++k) up += "../"; }
+        std::vector<std::string> crumbs;
+        find_path(cfg.nav, pages[i].file, crumbs);
+        // 面包屑数据（Breadcrumb 组件）：首页链接 / 祖先分组（无链接）/ 当前页（current）
+        json crumbsJson = json::array();
+        crumbsJson.push_back(json{{"title", "{{home}}"}, {"href", up + "index.html"}, {"current", false}});
+        for (const auto& c : crumbs)
+            crumbsJson.push_back(json{{"title", c}, {"href", ""}, {"current", false}});
+        crumbsJson.push_back(json{{"title", pages[i].title}, {"href", ""}, {"current", true}});
+        // 最后更新时间 + 阅读时长（front matter lastmod 优先，否则源 .md 修改时间；数字走令牌插值）
+        auto [cjk, words] = count_words(strip_tags(pages[i].html));
+        int mins = (int)std::ceil(cjk / 300.0 + words / 200.0);
+        if (mins < 1) mins = 1;
+        std::string updated = pages[i].lastmod.empty() ? format_mtime(f) : pages[i].lastmod;
+        std::string luPrefix = dict.count("lastUpdated") ? dict.at("lastUpdated") : "最后更新于";
+        std::string rt = dict.count("readingTime") ? dict.at("readingTime")
+                                                    : "约 {{minutes}} 分钟阅读（{{words}} 字）";
+        rt = subst_tokens(rt, {{"minutes", std::to_string(mins)}, {"words", std::to_string(cjk + words)}});
+        std::ostringstream meta;
+        if (!updated.empty()) meta << luPrefix << " " << esc(updated) << " · ";
+        meta << rt;
+        std::string updatedText = meta.str();   // 纯文本（LastUpdated 组件包 <div class="page-meta">）
+        // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
+        int depth = 0;   // 页面相对语言根的目录深度（guide/install → 1），修正 hreflang 相对路径
+        { size_t pos = 0; while ((pos = pages[i].file.find('/', pos)) != std::string::npos) { ++depth; ++pos; } }
+        headDataStore[i] = build_head_data(
+            pages[i].file, depth, pages[i].title, pages[i].desc,
+            pages[i].dateT, pages[i].dateT, true, crumbs,
+            (i > 0) ? pages[i - 1].file : std::string(),
+            (i + 1 < pages.size()) ? pages[i + 1].file : std::string());
+        // 阶段 1 产物暂存到 pages[i] 之外（避免跨线程重读 pages 元素）：面包屑/元信息/head 数据
+        {
+            // 地图模式面包屑：{links:[有 href], texts:[纯文本], current}（CrumbLink/CrumbText/CrumbCurrent）
+            json cm = json::object();
+            cm["links"] = json::array();
+            cm["texts"] = json::array();
+            for (const auto& item : crumbsJson) {
+                if (item.value("current", false)) cm["current"] = item["title"];
+                else if (!item.value("href", "").empty()) cm["links"].push_back(item);
+                else cm["texts"].push_back(item);
+            }
+            if (!cm.contains("current")) cm["current"] = "";
+            crumbsMapStore[i] = cm;
+        }
+        metaStore[i] = updatedText;          // 纯文本（LastUpdated 组件渲染 <div class="page-meta">）
+    };
+    auto emit_page = [&](size_t i) {
+        if (skip[i]) return;   // 增量跳过（阶段 1 已复用旧产物）
+        // 子目录页面（如 guide/install.html）需要 ../ 前缀修正导航/资源相对路径
+        std::string relBase;
+        {
+            size_t pos = 0;
+            while ((pos = pages[i].file.find('/', pos)) != std::string::npos) { relBase += "../"; ++pos; }
+        }
+        // 文档页 → PageCtx（地图模式数据）
+        PageCtx ctx;
+        ctx.nav_groups = nav_groups_json(cfg.nav, pages[i].file, relBase);
+        ctx.toc_items = tocItemsStore[i];
+        ctx.pager = pager_json(pages, i, relBase);
+        ctx.breadcrumb_map = crumbsMapStore[i];
+        ctx.edit = edit_json(cfg, pages[i].file);
+        ctx.body = pages[i].html;
+        ctx.title = pages[i].title;
+        ctx.desc = pages[i].desc;
+        ctx.last_updated = metaStore[i];
+        auto beIt = g_body_ends.find(curLocale);
+        ctx.body_end = (beIt != g_body_ends.end()) ? beIt->second : "";
+        ctx.head_meta = headDataStore[i].value("meta", json::object());
+        ctx.head_links = headDataStore[i].value("links", json::array());
+        ctx.jsonld = headDataStore[i].value("jsonld", "");
+        ctx.curLocale = curLocale; ctx.lang_data = langData;
+        ctx.i18nJson = i18nJson; ctx.relBase = relBase;
+        std::string page = map_render_page(cfg, opt, ctx, type_for_mode(maps, "pages", "doc"));
+        fs::path pageOut = locOut / (pages[i].file + ".html");
+        std::error_code pe2;
+        fs::create_directories(pageOut.parent_path(), pe2);   // 子目录路由需建父目录
+        std::ofstream(pageOut)
+            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
+        // front matter aliases：为每个旧路径生成重定向页（canonical + meta refresh + JS 兜底，
+        // 对标 Hugo aliases —— 文档改名后旧链接自动指向新页）
+        for (const auto& a : pages[i].aliases) {
+            std::string alias = a;
+            while (!alias.empty() && (alias.front() == '/' || alias.front() == '\\')) alias = alias.substr(1);
+            if (alias.empty()) continue;
+            fs::path af = locOut / (alias + ".html");
+            std::error_code aec;
+            fs::create_directories(af.parent_path(), aec);
+            std::error_code a2;
+            fs::path tgt = fs::relative(pageOut, af.parent_path(), a2);
+            std::string rel = a2 ? std::string("index.html") : tgt.generic_string();
+            for (auto& c : rel) if (c == '\\') c = '/';
+            std::string rd = "<!DOCTYPE html>\n<html lang=\"" + esc_attr(curLocale) + "\">\n<head>\n"
+                "  <meta charset=\"utf-8\">\n"
+                "  <title>" + esc(pages[i].title) + "</title>\n"
+                "  <link rel=\"canonical\" href=\"" + esc_attr(rel) + "\">\n"
+                "  <meta http-equiv=\"refresh\" content=\"0; url=" + esc_attr(rel) + "\">\n"
+                "  <script>location.replace(\"" + esc_attr(rel) + "\");</script>\n"
+                "</head>\n<body><a href=\"" + esc_attr(rel) + "\">" + esc(pages[i].title) + "</a></body>\n</html>\n";
+            std::ofstream(af) << rd;
+        }
+        // 插件钩子：每页渲染写盘后（有插件时整体串行，保证时序与安全；
+        // 路径用绝对路径，插件进程 cwd 是插件目录，相对路径会解析失败）
+        if (hasPlugs)
+            run_plugin_hooks("on_page_rendered", json{
+                {"file",   pages[i].file},
+                {"locale", multi ? loc : ""},
+                {"path",   fs::absolute(pageOut).string()}
+            });
+    };
+    // 阶段 1 暂存数组已在上面声明（crumbsStore 等）
+    if (hasPlugs) { for (size_t i = 0; i < pages.size(); ++i) render_content(i); }
+    else run_parallel(pages.size(), render_content);
+    if (hasPlugs) { for (size_t i = 0; i < pages.size(); ++i) emit_page(i); }
+    else run_parallel(pages.size(), emit_page);
+
+    // 8.5) 博客流（约定优于配置：md/blog/ 存在时启用）
+    //      详情页 blog/<name>.html（面包屑=首页/博客/标题，上下篇=博客邻篇）
+    //      + 列表页 blog/index.html + 分页 blog/page/N.html（每页 10 篇）
+    if (b.query_ready && b.query_out.contains("blog_order") && b.query_out["blog_order"].is_array()
+        && !b.query_out["blog_order"].empty()) {
+        fs::path blogDir = in_dir / "blog";
+        {
+            std::error_code bec2;
+            if (!(fs::exists(blogDir, bec2) && fs::is_directory(blogDir, bec2))) {
+                fs::path rootBlog = in_dir.parent_path() / "blog";
+                if (fs::exists(rootBlog, bec2) && fs::is_directory(rootBlog, bec2))
+                    blogDir = rootBlog;
+            }
+        }
+        fs::create_directories(locOut / "blog", ec);
+        // 文章渲染顺序由插件 blog_order（有序 file 列表）决定；引擎只做渲染
+        std::map<std::string, Page> pgMap;
+        for (const auto& bp : b.blog_posts) pgMap[bp.file] = bp;
+        const auto& qOrder = b.query_out["blog_order"];
+        for (size_t bi = 0; bi < qOrder.size(); ++bi) {
+            auto pit = pgMap.find(qOrder[bi].get<std::string>());
+            if (pit == pgMap.end()) continue;
+            Page p = pit->second;
+            if (p.draft && !includeDrafts) continue;
+            std::string rel = p.file.substr(5);          // "blog/xxx" → "xxx"
+            fs::path f = blogDir / (rel + ".md");
+            if (multi) {
+                fs::path fl = blogDir / (rel + "." + loc + ".md");
+                if (fs::exists(fl)) f = fl;
+            }
+            if (!fs::exists(f)) continue;
+            std::string mdRaw = read_file(f);
+            std::string md;
+            parse_front_matter(mdRaw, md);
+            p.html = render_doc_body(md, false);   // blog 正文跨语言共享，用默认中文标题
+            if (p.title.empty()) p.title = extract_title(md, rel);
+            std::string excerpt = collapse_ws(strip_tags(p.html));
+            if (excerpt.size() > 160) excerpt = truncate_utf8(excerpt, 160) + "…";
+            p.desc = excerpt;
+            // 面包屑数据（Breadcrumb 组件；博客详情页在 blog/ 下，链接相对本目录）
+            json bcJson = json::array();
+            bcJson.push_back(json{{"title", "{{home}}"}, {"href", "../index.html"}, {"current", false}});
+            bcJson.push_back(json{{"title", "{{navBlog}}"}, {"href", "index.html"}, {"current", false}});
+            bcJson.push_back(json{{"title", p.title}, {"href", ""}, {"current", true}});
+            json bcMap = json::object();
+            bcMap["links"] = json::array();
+            bcMap["texts"] = json::array();
+            for (const auto& item : bcJson) {
+                if (item.value("current", false)) bcMap["current"] = item["title"];
+                else if (!item.value("href", "").empty()) bcMap["links"].push_back(item);
+                else bcMap["texts"].push_back(item);
+            }
+            if (!bcMap.contains("current")) bcMap["current"] = "";
+            // 元信息：发布日期 + 阅读时长（纯文本，LastUpdated 组件包 <div class="page-meta">）
+            auto [cjk, words] = count_words(strip_tags(p.html));
+            int mins = (int)std::ceil(cjk / 300.0 + words / 200.0);
+            if (mins < 1) mins = 1;
+            std::string pub = format_date_local(p.dateT);   // 本地时区，避免 UTC 倒退一天
+            std::string rt = dict.count("readingTime") ? dict.at("readingTime")
+                                                        : "约 {{minutes}} 分钟阅读（{{words}} 字）";
+            rt = subst_tokens(rt, {{"minutes", std::to_string(mins)}, {"words", std::to_string(cjk + words)}});
+            std::string meta = esc(pub) + " · " + rt;
+            // 上下篇数据（博客邻篇，缺位置灰——行业标准；链接相对 blog/ 目录）
+            // 邻篇 = 插件排序结果的前后项（机械索引，非查询）
+            json pagerBj;
+            pagerBj["show"] = (bi > 0) || (bi + 1 < qOrder.size());
+            if (bi > 0) {
+                auto pit2 = pgMap.find(qOrder[bi - 1].get<std::string>());
+                if (pit2 != pgMap.end())
+                    pagerBj["prev"] = json{{"show", true}, {"title", pit2->second.title},
+                                           {"href", pit2->second.file.substr(5) + ".html"}};
+                else pagerBj["prev"] = json{{"show", false}};
+            } else pagerBj["prev"] = json{{"show", false}};
+            if (bi + 1 < qOrder.size()) {
+                auto nit = pgMap.find(qOrder[bi + 1].get<std::string>());
+                if (nit != pgMap.end())
+                    pagerBj["next"] = json{{"show", true}, {"title", nit->second.title},
+                                           {"href", nit->second.file.substr(5) + ".html"}};
+                else pagerBj["next"] = json{{"show", false}};
+            } else pagerBj["next"] = json{{"show", false}};
+            // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
+            json hd = build_head_data(p.file, 1, p.title, p.desc, p.dateT, p.dateT, true, {}, "", "");
+            TocResult t = build_toc(p.html);
+            // 博客详情页 → PageCtx
+            PageCtx ctx;
+            ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../");
+            ctx.head_meta = hd.value("meta", json::object());
+            ctx.head_links = hd.value("links", json::array());
+            ctx.jsonld = hd.value("jsonld", "");
+            ctx.toc_items = t.items;
+            ctx.pager = pagerBj;
+            ctx.breadcrumb_map = bcMap;
+            ctx.edit = json{{"show", false}};
+            ctx.body = t.html;
+            ctx.title = p.title;
+            ctx.desc = p.desc;
+            ctx.last_updated = meta;
+            auto beIt2 = g_body_ends.find(curLocale);
+            ctx.body_end = (beIt2 != g_body_ends.end()) ? beIt2->second : "";
+            ctx.curLocale = curLocale; ctx.lang_data = langData;
+            ctx.i18nJson = i18nJson; ctx.relBase = "../";
+            std::string page = map_render_page(cfg, opt, ctx, type_for_mode(maps, "blog-post", "blog-post"));
+            std::ofstream(locOut / "blog" / (rel + ".html"))
+                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
+        }
+        // 列表页 + 分页：第一页 blog/index.html，后续 blog/page/N.html
+        // （列表页在 blog/ 下 relBase="../"；分页页在 blog/page/ 下 relBase="../../"）
+        // 分页分组由插件 blog_pages 决定（每页 file 数组）；引擎只渲染 + 生成分页导航
+        {
+            json qPages = b.query_out.value("blog_pages", json::array());
+            if (!qPages.is_array()) qPages = json::array();
+            size_t pagesN = qPages.size();
+            for (size_t pi = 0; pi < pagesN; ++pi) {
+                bool isPageSub = (pi > 0);                  // 分页页位于 blog/page/
+                std::string relBase = isPageSub ? "../../" : "../";
+                std::string cardBase = isPageSub ? "../" : "";   // 卡片链接前缀
+                std::string navBase  = isPageSub ? "../" : "";   // 分页导航链接前缀
+                // 博客列表数据（BlogList/BlogCard 组件渲染；分页 BlogPager 数据化）
+                json posts = json::array();
+                for (const auto& fl : qPages[pi]) {
+                    auto pit = pgMap.find(fl.get<std::string>());
+                    if (pit == pgMap.end()) continue;
+                    const Page& p = pit->second;
+                    posts.push_back(json{{"date", format_date_local(p.dateT)},
+                                         {"href", cardBase + p.file.substr(5) + ".html"},
+                                         {"title", p.title}, {"desc", p.desc}});
+                }
+                auto pageHref = [&](size_t pp) {
+                    if (pp == 0) return navBase + "index.html";
+                    return navBase + "page/" + std::to_string(pp + 1) + ".html";
+                };
+                json bp = json::object();
+                bp["show"] = (pagesN > 1);
+                if (pagesN > 1) {
+                    if (pi > 0) bp["prev_href"] = pageHref(pi - 1);
+                    if (pi + 1 < pagesN) bp["next_href"] = pageHref(pi + 1);
+                    bp["cur"] = json{{"num", pi + 1}};
+                    bp["pages"] = json::array();
+                    for (size_t pp = 0; pp < pagesN; ++pp)
+                        bp["pages"].push_back(json{{"num", pp + 1}, {"href", pageHref(pp)}});
+                }
+                // 博客列表页 → PageCtx（BlogList/BlogCard/BlogPager 组件渲染）
+                PageCtx ctx;
+                ctx.blog_posts = posts;
+                ctx.blog_pager = bp;
+                ctx.title = "{{blogTitle}}";
+                ctx.desc = cfg.description;
+            ctx.curLocale = curLocale; ctx.lang_data = langData;
+            ctx.i18nJson = i18nJson; ctx.relBase = relBase;
+            ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase);
+            std::string page = map_render_page(cfg, opt, ctx, type_for_mode(maps, "blog-list", "blog"));
+                if (pi == 0)
+                    std::ofstream(locOut / "blog" / "index.html")
+                        << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
+                else {
+                    fs::create_directories(locOut / "blog" / "page", ec);
+                    std::ofstream(locOut / "blog" / "page" / (std::to_string(pi + 1) + ".html"))
+                        << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
+                }
+            }
+        }
+    }
+
+    // 8) 搜索索引（每语言独立，内容取自该语言正文；标题走 i18n 字典解析）
+    {   // 合并博客文章进索引（file 带 blog/ 前缀，链接相对当前语言目录正确）
+        std::vector<Page> allPages = pages;
+        allPages.insert(allPages.end(), b.blog_posts.begin(), b.blog_posts.end());
+        gen_search_index(allPages, includeDrafts, dict, locOut);
+    }
+
+    // 9) 标签聚合页：基于 front matter 的 tags，自动生成每个标签一个列表页 + 总览页
+    //    （tags 页位于 tags/ 子目录：relBase="../"；博客文章也参与聚合，链接 ../blog/xxx.html）
+    {
+        if (b.query_ready && b.query_out.contains("tags") && b.query_out["tags"].is_array()
+            && !b.query_out["tags"].empty()) {
+            fs::create_directories(locOut / "tags", ec);
+            // 标签聚合由插件完成（tags 数组 + tag_pages 每标签 file 列表）；引擎只渲染
+            std::map<std::string, const Page*> pgMap;
+            for (const auto& p : pages) pgMap[p.file] = &p;
+            for (const auto& p : b.blog_posts) pgMap[p.file] = &p;
+            json tags = b.query_out["tags"];
+            // tags 聚合页 → PageCtx（TagOverview/TagItem 组件渲染）
+            PageCtx ctx;
+            ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
+            ctx.tags = tags;
+            ctx.title = "{{allTags}}";
+            ctx.desc = cfg.description;
+            ctx.curLocale = curLocale; ctx.lang_data = langData;
+            ctx.i18nJson = i18nJson; ctx.relBase = "../";
+            std::string ov = map_render_page(cfg, opt, ctx, type_for_mode(maps, "tags", "tags"));
+            std::ofstream(locOut / "tags" / "index.html")
+                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, dict)), locOut) : i18n_replace(ov, dict));
+            const json& tagPages = b.query_out.contains("tag_pages")
+                                    ? b.query_out["tag_pages"] : json::object();
+            for (auto it = tagPages.begin(); it != tagPages.end(); ++it) {
+                const std::string& tname = it.key();
+                // 标签单页数据（TagPage/TagDocItem 组件渲染；docs 顺序由插件给出）
+                json docs = json::array();
+                for (const auto& fl : it.value()) {
+                    auto pit = pgMap.find(fl.get<std::string>());
+                    if (pit == pgMap.end()) continue;
+                    const Page& p = *pit->second;
+                    std::string d = (p.file.size() > 5 && p.file.compare(0, 5, "blog/") == 0)
+                                    ? format_date_local(p.dateT) : "";
+                    docs.push_back(json{{"href", "../" + p.file + ".html"}, {"title", p.title},
+                                        {"date", d}, {"desc", std::string()}});
+                }
+                PageCtx tctx;
+                tctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
+                tctx.tag_name = tname;
+                tctx.tag_docs = docs;
+                tctx.title = "#" + tname;
+                tctx.desc = cfg.description;
+                tctx.curLocale = curLocale; tctx.lang_data = langData;
+                tctx.i18nJson = i18nJson; tctx.relBase = "../";
+                std::string tp = map_render_page(cfg, opt, tctx, type_for_mode(maps, "tag-page", "tag-page"));
+                std::ofstream(locOut / "tags" / (slugify(tname) + ".html"))
+                    << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(tp, dict)), locOut) : i18n_replace(tp, dict));
+            }
+        }
+    }
+
+    // 10) single 通用单页（maps 注册表 mode=single：404 + 第三方自定义单页统一入口。
+    //     output 自定输出文件名（默认 <type>.html）；页面结构/内容由地图 + 地图 data + props 完全自定义）
+    for (const auto& e : maps) {
+        if (!e.is_object() || e.value("mode", "") != "single") continue;
+        std::string stype = e.value("type", "");
+        if (stype.empty()) continue;
+        std::string output = e.value("output", "");
+        if (output.empty()) output = stype + ".html";
+        PageCtx ctx;
+        ctx.nav_groups = nav_groups_json(cfg.nav, "", "");
+        ctx.title = (stype == "404") ? "404" : cfg.title;
+        ctx.desc = cfg.description;
+        ctx.curLocale = curLocale; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
+        std::string sp = map_render_page(cfg, opt, ctx, stype);
+        std::ofstream(locOut / output)
+            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(sp, dict)), locOut) : i18n_replace(sp, dict));
+    }
+
+    // 11) RSS / JSON Feed（行业标准，内建，无需 Node；博客文章并入订阅流）
+    {
+        std::vector<Page> allPages = pages;
+        allPages.insert(allPages.end(), b.blog_posts.begin(), b.blog_posts.end());
+        gen_feeds(locOut, loc, allPages, cfg, dict, multi);
+    }
+    // 12) PWA（manifest + service worker + theme-color），内建替代 gen-pwa.js
+    gen_pwa(locOut, cfg, feedTitle, theme_root() / "assets");}
+
 static void render_locales(BuildContext& b) {
     // 版本化适配：head.nav 指向当前版本不存在的页面时剔除（历史版快照内容不完整——
     // 多版本共用一个 config，旧版本没有新页面属正常；避免死链导航）。单版本零影响。
@@ -883,11 +1529,6 @@ static void render_locales(BuildContext& b) {
         return;
     }
     // 按 mode 查找第一个匹配的页面类型名（找不到返回默认名，保持旧行为）
-    auto typeForMode = [&](const std::string& mode, const std::string& def) {
-        for (const auto& e : maps)
-            if (e.is_object() && e.value("mode", "") == mode) return e.value("type", def);
-        return def;
-    };
     SiteConfig& cfg = b.cfg;
     RenderOpts& opt = b.opt;
     std::vector<Page>& pages = b.pages;
@@ -927,651 +1568,13 @@ static void render_locales(BuildContext& b) {
     std::string aCur = std::to_string(asig);
     bool assetsChanged = (aPrev != aCur);   // 源有变化 → 本次全语言刷新
 
+    // 语言渲染循环：每个语言调用 render_one_locale（assets/压缩/指纹/页面渲染/feeds/PWA）
     for (const auto& loc : locs) {
         bool multi = i18n.enabled;
         const I18nDict& dict = multi ? i18n.dicts[loc] : fallbackUI;
-        std::string i18nJson = dict_to_json(dict);   // 注入页面，供 app.js 客户端文案本地化
-        std::string curLocale = loc;                 // 空 = 单语言（render_page 退化为 zh-CN）
-        fs::path locOut = out_dir;
-        if (multi) locOut = out_dir / loc;
-        fs::create_directories(locOut, ec);
-        // 复制前端资源到本语言目录（相对链接 assets/... 在子目录内同样成立）
-        // 源签名变化或目标缺失 → 复制；40 个字体 ×2 语言是构建最大 I/O 大头，多数构建命中跳过。
-        bool needAssets = assetsChanged || !fs::exists(locOut / "assets");
-        if (g_verbose && !needAssets)
-            std::cout << color::muted("  [incr] 跳过 assets 复制（源未变）\n");
-        if (needAssets) {
-            if (fs::exists(theme_root() / "assets"))
-                fs::copy(theme_root() / "assets", locOut / "assets", fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
-            else
-                fs::create_directories(locOut / "assets", ec);
-            // 复制前端运行时依赖（deps/ 中的 JS·CSS 库）到 assets/deps
-            // 注意：deps/vendor 是 C++ 编译期头文件（md4c / nlohmann），不属于站点运行资源，不随站点发布
-            if (fs::exists(g_engine / "deps")) {
-                fs::create_directories(locOut / "assets" / "deps", ec);
-                for (const auto& e : fs::directory_iterator(g_engine / "deps")) {
-                    if (e.path().filename() == "vendor") continue;   // 编译期依赖，跳过发布
-                    fs::copy(e.path(), locOut / "assets" / "deps" / e.path().filename(),
-                             fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
-                }
-            }
-        }
-
-        // 静态资源发布：md/ 下图片/附件等非 Markdown 文件，按相对路径拷到本语言目录
-        copy_doc_assets(in_dir, locOut, ec);
-
-        // 构建期压缩（默认开启，config site.compress=false 可关）：
-        // 1) 图片：stb_image + libwebp 生成 WebP 副本（原图保留，页面 <picture> 优先 WebP）；
-        // 2) CSS：主题 css/ 保守紧凑化（去注释 + 折叠空白，无收益则不动）。
-        if (cfg.compress) {
-            int nWebp = webpize_dir(locOut, cfg.jpegQuality);
-            if (g_verbose && nWebp > 0)
-                std::cout << color::muted("  [compress] 生成 " + std::to_string(nWebp) + " 个 WebP 副本\n");
-            compress_dir_css(locOut / "assets" / "css");
-        }
-        // 资源指纹（cache busting）：对主题 css/js 计算内容哈希，页面引用与 sw 缓存同步加 ?v=
-        if (assetsChanged || g_fp.empty() || !fs::exists(locOut / "assets" / "css"))
-            fingerprint_assets(locOut / "assets");
-
-        // 语言切换器（仅多语言模式）：链接到兄弟语言的 index.html
-        json langData = json{{"show", false}, {"current", ""}, {"items", json::array()}};
-        if (multi) {
-            // 语言切换数据（地图模式 LangSwitch/LangItem 组件渲染；href 的 relBase 前缀由 map_render_page 修正）
-            langData["show"] = true;
-            langData["current"] = i18n.labels.count(loc) ? i18n.labels.at(loc) : loc;
-            langData["items"] = json::array();
-            for (auto& kv : i18n.labels)
-                if (kv.first != loc)
-                    langData["items"].push_back(json{{"label", kv.second},
-                                                     {"href", "../" + kv.first + "/index.html"}});
-        }
-
-        // 本语言在站点基址下的前缀（用于 canonical / 交替链接 / 结构化数据）
-        std::string homeBase;
-        if (!cfg.url.empty()) { homeBase = cfg.url; if (!homeBase.empty() && homeBase.back() != '/') homeBase += '/';
-                                if (multi) homeBase += loc + "/"; }
-
-        // 行业标准增强：本语言 RSS / PWA / 社交分享所需的 head 片段与封面图 URL
-        std::string feedTitle = i18n_replace(cfg.title, dict);
-        std::string feedLinkTag = "  <link rel=\"alternate\" type=\"application/rss+xml\" title=\""
-                                  + esc_attr(feedTitle) + "\" href=\"./rss.xml\">\n";
-        std::string manifestTag = "  <link rel=\"manifest\" href=\"./manifest.webmanifest\">\n"
-                                  "  <meta name=\"theme-color\" content=\"#a8332a\">\n";
-        std::string ogImageUrl;
-        if (!cfg.ogImage.empty() && !cfg.url.empty()) {
-            ogImageUrl = cfg.url;
-            if (ogImageUrl.back() != '/') ogImageUrl += '/';
-            std::string rel = cfg.ogImage;
-            if (!rel.empty() && rel.front() == '/') rel = rel.substr(1);   // 去掉开头 /，避免双斜杠
-            if (rel.compare(0, 4, "http") == 0) ogImageUrl = rel;
-            else ogImageUrl += rel;
-        }
-
-        // hreflang 交替链接（i18n 标准 SEO）：指向其他语言同一页面 + x-default。
-        // url 配置时用绝对地址；url 为空时用相对路径，需按页面深度加 ../ 前缀
-        // （子目录页如 guide/install 在 zh-CN/guide/，兄弟语言在 ../../en/...）。
-        // head 数据化（地图模式 MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）。
-        // canonical/prev/next/hreflang/RSS/manifest → links；OG/Twitter/theme-color → meta；
-        // JSON-LD → jsonld 字符串。fallback 仍用 headExtra 字符串（双轨并行）。
-        auto build_head_data = [&](const std::string& file, int depth,
-                                   const std::string& title, const std::string& desc,
-                                   std::time_t published, std::time_t modified,
-                                   bool article, const std::vector<std::string>& crumbs,
-                                   const std::string& prevFile, const std::string& nextFile) {
-            json hd = json::object();
-            hd["meta"] = json{{"desc", desc}};
-            hd["meta"]["og"] = json::array();
-            hd["meta"]["names"] = json::array();
-            hd["links"] = json::array();
-            std::string up;
-            for (int k = 0; k < depth + 1; ++k) up += "../";
-            if (!cfg.url.empty()) {
-                std::string u = homeBase;
-                hd["links"].push_back(json{{"rel", "canonical"}, {"href", u + file + ".html"}, {"attrs", ""}});
-                if (!prevFile.empty()) hd["links"].push_back(json{{"rel", "prev"}, {"href", u + prevFile + ".html"}, {"attrs", ""}});
-                if (!nextFile.empty()) hd["links"].push_back(json{{"rel", "next"}, {"href", u + nextFile + ".html"}, {"attrs", ""}});
-                if (i18n.enabled) {
-                    for (auto& kv : i18n.labels) {
-                        if (kv.first == loc) continue;
-                        std::string ou;
-                        if (cfg.url.empty()) ou = up + kv.first + "/" + file + ".html";
-                        else { ou = cfg.url; if (!ou.empty() && ou.back() != '/') ou += '/'; ou += kv.first + "/" + file + ".html"; }
-                        hd["links"].push_back(json{{"rel", "alternate"}, {"href", ou}, {"attrs", " hreflang=\"" + kv.first + "\""}});
-                    }
-                    std::string du;
-                    if (cfg.url.empty()) du = up + i18n.defaultLocale + "/" + file + ".html";
-                    else { du = cfg.url; if (!du.empty() && du.back() != '/') du += '/'; du += i18n.defaultLocale + "/" + file + ".html"; }
-                    hd["links"].push_back(json{{"rel", "alternate"}, {"href", du}, {"attrs", " hreflang=\"x-default\""}});
-                }
-                // JSON-LD：文章页 → BreadcrumbList；首页 → WebSite
-                if (article) {
-                    std::ostringstream items;
-                    int pos = 1;
-                    items << "{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
-                          << esc_attr(i18n_replace("{{home}}", dict)) << "\",\"item\":\""
-                          << homeBase << "index.html\"}";
-                    for (const auto& c : crumbs)
-                        items << ",{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
-                              << esc_attr(i18n_replace(c, dict)) << "\"}";
-                    items << ",{\"@type\":\"ListItem\",\"position\":" << pos++ << ",\"name\":\""
-                          << esc_attr(i18n_replace(title, dict)) << "\",\"item\":\"" << homeBase << file << ".html\"}";
-                    hd["jsonld"] = "{\"@context\":\"https://schema.org\",\"@type\":\"BreadcrumbList\",\"itemListElement\":["
-                                   + items.str() + "]}";
-                } else {
-                    hd["jsonld"] = "{\"@context\":\"https://schema.org\",\"@type\":\"WebSite\",\"name\":\""
-                                   + esc_attr(i18n_replace(cfg.title, dict)) + "\",\"url\":\"" + homeBase + "index.html\"}";
-                }
-            } else hd["jsonld"] = "";
-            // RSS + PWA manifest + theme-color（RSS/manifest 用 depth 层 ../；hreflang 用 depth+1 层上级语言目录）
-            std::string upRss;
-            for (int k = 0; k < depth; ++k) upRss += "../";
-            hd["links"].push_back(json{{"rel", "alternate"}, {"href", upRss + "rss.xml"},
-                                       {"attrs", " type=\"application/rss+xml\" title=\"" + esc_attr(feedTitle) + "\""}});
-            hd["links"].push_back(json{{"rel", "manifest"}, {"href", upRss + "manifest.webmanifest"}, {"attrs", ""}});
-            hd["meta"]["names"].push_back(json{{"name", "theme-color"}, {"content", "#a8332a"}});
-            // OG / Twitter（social_head 数据化；摘要去标题前缀）
-            std::string d = desc;
-            size_t pp = 0;
-            while (pp < d.size() && (d[pp] == ' ' || d[pp] == '\t' || d[pp] == '\n' || d[pp] == '\r')) ++pp;
-            if (!title.empty() && d.compare(pp, title.size(), title) == 0) {
-                pp += title.size();
-                while (pp < d.size() && (d[pp] == ' ' || d[pp] == '\t' || d[pp] == '\n' || d[pp] == '\r')) ++pp;
-                d = d.substr(pp);
-            }
-            std::string ogUrl = cfg.url.empty() ? std::string() : homeBase + file + ".html";
-            if (!ogUrl.empty()) hd["meta"]["og"].push_back(json{{"property", "og:url"}, {"content", ogUrl}});
-            hd["meta"]["og"].push_back(json{{"property", "og:type"}, {"content", article ? "article" : "website"}});
-            hd["meta"]["og"].push_back(json{{"property", "og:title"}, {"content", title}});
-            if (!d.empty()) hd["meta"]["og"].push_back(json{{"property", "og:description"}, {"content", d}});
-            if (!cfg.url.empty() && !cfg.title.empty())
-                hd["meta"]["og"].push_back(json{{"property", "og:site_name"}, {"content", cfg.title}});
-            if (!loc.empty()) hd["meta"]["og"].push_back(json{{"property", "og:locale"}, {"content", loc}});
-            if (!ogImageUrl.empty()) hd["meta"]["og"].push_back(json{{"property", "og:image"}, {"content", ogImageUrl}});
-            if (article) {
-                if (published) hd["meta"]["og"].push_back(json{{"property", "article:published_time"}, {"content", iso8601(published)}});
-                if (modified)  hd["meta"]["og"].push_back(json{{"property", "article:modified_time"}, {"content", iso8601(modified)}});
-            }
-            hd["meta"]["names"].push_back(json{{"name", "twitter:card"}, {"content", ogImageUrl.empty() ? "summary" : "summary_large_image"}});
-            hd["meta"]["names"].push_back(json{{"name", "twitter:title"}, {"content", title}});
-            if (!d.empty()) hd["meta"]["names"].push_back(json{{"name", "twitter:description"}, {"content", d}});
-            if (!ogImageUrl.empty()) hd["meta"]["names"].push_back(json{{"name", "twitter:image"}, {"content", ogImageUrl}});
-            return hd;
-        };
-        // 6) 首页（maps 注册表 mode=home；isHome 标记页眉/移动端一致；无左侧边栏）
-        // 首页 → PageCtx（hero/cards 数据由 Hero/Cards 组件渲染）
-        {
-            PageCtx ctx;
-            ctx.is_home = true;
-            ctx.hero = json{{"title", cfg.homeTitle.empty() ? cfg.title : cfg.homeTitle},
-                            {"subtitle", cfg.homeSubtitle.empty() ? cfg.description : cfg.homeSubtitle}};
-            std::string ctaFile = cfg.homeCtaFile;
-            std::string ctaText = cfg.homeCtaText.empty() ? std::string("{{getStarted}}") : cfg.homeCtaText;
-            if (ctaFile.empty() && !pages.empty()) ctaFile = pages[0].file;
-            if (!ctaFile.empty()) {
-                ctx.hero["cta_href"] = ctaFile + ".html";
-                ctx.hero["cta_text"] = ctaText;
-            }
-            ctx.cards = cards_json(cfg, pages);
-            // 博客流注入首页（插件 home_posts 决定取哪些；引擎只做渲染数据映射）
-            if (b.query_ready && b.query_out.contains("home_posts") && b.query_out["home_posts"].is_array()
-                && !b.query_out["home_posts"].empty()) {
-                json posts = json::array();
-                std::map<std::string, const Page*> pgMap;
-                for (const auto& bp : b.blog_posts) pgMap[bp.file] = &bp;
-                for (const auto& fl : b.query_out["home_posts"]) {
-                    auto it = pgMap.find(fl.get<std::string>());
-                    if (it == pgMap.end()) continue;
-                    const Page& bp = *it->second;
-                    posts.push_back(json{{"date", format_date_local(bp.dateT)},
-                                         {"href", "blog/" + bp.file.substr(5) + ".html"},
-                                         {"title", bp.title},
-                                         {"desc", std::string()}});
-                }
-                if (!posts.empty()) ctx.blog_posts = posts;
-            }
-            ctx.title = cfg.title;
-            ctx.desc = cfg.description;
-            ctx.curLocale = curLocale; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
-            // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
-            {
-                json hd = build_head_data("index", 0, cfg.title, cfg.description, 0, 0, false, {}, "", "");
-                ctx.head_meta = hd.value("meta", json::object());
-                ctx.head_links = hd.value("links", json::array());
-                ctx.jsonld = hd.value("jsonld", "");
-            }
-            std::string landing = map_render_page(cfg, opt, ctx, typeForMode("home", "home"), true);
-            std::ofstream(locOut / "index.html")
-                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(landing, dict)), locOut) : i18n_replace(landing, dict));
-        }
-
-        // 7) 各文档页（含 TOC 注入 + 上下篇 + i18n）
-        // ---- Hugo 式并发渲染（多核并行）----
-        // 两阶段：①并行渲染正文到内存（写各自 pages[i]，无跨元素竞争）；
-        //         ②并行拼装页面并写盘（pager 需全部页面 title 就绪）。
-        // 有插件注册时退化串行（on_page_rendered 依赖顺序与安全）。
-        bool hasPlugs = plugins_any();
-        std::mutex sigMutex;                       // pageSig 并发读写保护
-        std::vector<char> skip(pages.size(), 0);   // 增量跳过标记（阶段 2 复用）
-        // 阶段 1 产物暂存（并发下各线程只写自己索引，安全；阶段 2 只读自身索引）
-        std::vector<std::string> tocHtml(pages.size()), tocNav(pages.size());
-        std::vector<std::string> metaStore(pages.size());
-        std::vector<json> tocItemsStore(pages.size()),
-                         crumbsMapStore(pages.size()), headDataStore(pages.size());
-        auto render_content = [&](size_t i) {
-            if (pages[i].draft && !includeDrafts) return;   // 草稿默认不发布；-D/--drafts 时包含
-            // 内容翻译：优先 md/<file>.<loc>.md（多语言），否则退回默认 .md（部分翻译）
-            fs::path f = in_dir / (pages[i].file + ".md");
-            if (multi) {
-                fs::path fl = in_dir / (pages[i].file + "." + loc + ".md");
-                if (fs::exists(fl)) f = fl;
-            }
-            if (!fs::exists(f)) { std::cerr << color::error("缺少文件: ") << f << "\n"; return; }
-            // 增量构建：源 .md 指纹（mtime:size）未变且输出已存在 → 跳过渲染复用产物。
-            // 指纹无论全量/增量都记录（全量也更新 .pages.sig，否则下次增量永不命中）。
-            struct stat fst;
-            std::string sig;
-            if (stat(f.string().c_str(), &fst) == 0) {
-                sig = std::to_string(fst.st_mtime) + ":" + std::to_string((long long)fst.st_size);
-                std::string key = pages[i].file + "|" + (multi ? loc : "");
-                if (b.incremental && !b.globalDirty) {
-                    fs::path existingOut = locOut / (pages[i].file + ".html");
-                    std::lock_guard<std::mutex> lk(sigMutex);
-                    auto it = b.pageSig.find(key);
-                    if (it != b.pageSig.end() && it->second == sig && fs::exists(existingOut)) {
-                        skip[i] = 1;
-                        if (g_verbose)
-                            std::cout << color::muted("  [incr] 跳过未变化: ") << pages[i].file << "\n";
-                        return;   // 复用已有 HTML，跳过本次渲染
-                    }
-                    b.pageSig[key] = sig;   // 记录本次指纹（全量/增量一致）
-                } else {
-                    std::lock_guard<std::mutex> lk(sigMutex);
-                    b.pageSig[key] = sig;
-                }
-            }
-            std::string mdRaw = read_file(f);
-            pages[i].dateT = parse_date_str(pages[i].date);
-            if (!pages[i].dateT) pages[i].dateT = file_mtime_t(f);
-            std::string md;
-            FrontMatter fm = parse_front_matter(mdRaw, md);   // 剥离 front matter，取到正文与元数据
-            pages[i].html  = render_doc_body(md, curLocale == "en");
-            if (pages[i].title.empty()) pages[i].title = extract_title(md, pages[i].file);
-            pages[i].lastmod  = fm.lastmod;
-            pages[i].aliases  = fm.aliases;
-            TocResult toc = build_toc(pages[i].html);
-            tocHtml[i] = toc.html; tocNav[i] = toc.toc;
-            tocItemsStore[i] = toc.items;   // TOC 数据（TocSidebar 组件）
-            std::string excerpt = collapse_ws(strip_tags(pages[i].html));
-            if (excerpt.size() > 160) excerpt = truncate_utf8(excerpt, 160) + "…";
-            pages[i].desc = fm.description.empty() ? excerpt : fm.description;   // front matter 优先
-            // 面包屑：首页 / 祖先分组 / 当前页（当前页不链接）；子目录页首页链接需 ../ 回退
-            std::string up;
-            { size_t pos = 0; int d = 0;
-              while ((pos = pages[i].file.find('/', pos)) != std::string::npos) { ++d; ++pos; }
-              for (int k = 0; k < d; ++k) up += "../"; }
-            std::vector<std::string> crumbs;
-            find_path(cfg.nav, pages[i].file, crumbs);
-            // 面包屑数据（Breadcrumb 组件）：首页链接 / 祖先分组（无链接）/ 当前页（current）
-            json crumbsJson = json::array();
-            crumbsJson.push_back(json{{"title", "{{home}}"}, {"href", up + "index.html"}, {"current", false}});
-            for (const auto& c : crumbs)
-                crumbsJson.push_back(json{{"title", c}, {"href", ""}, {"current", false}});
-            crumbsJson.push_back(json{{"title", pages[i].title}, {"href", ""}, {"current", true}});
-            // 最后更新时间 + 阅读时长（front matter lastmod 优先，否则源 .md 修改时间；数字走令牌插值）
-            auto [cjk, words] = count_words(strip_tags(pages[i].html));
-            int mins = (int)std::ceil(cjk / 300.0 + words / 200.0);
-            if (mins < 1) mins = 1;
-            std::string updated = pages[i].lastmod.empty() ? format_mtime(f) : pages[i].lastmod;
-            std::string luPrefix = dict.count("lastUpdated") ? dict.at("lastUpdated") : "最后更新于";
-            std::string rt = dict.count("readingTime") ? dict.at("readingTime")
-                                                        : "约 {{minutes}} 分钟阅读（{{words}} 字）";
-            rt = subst_tokens(rt, {{"minutes", std::to_string(mins)}, {"words", std::to_string(cjk + words)}});
-            std::ostringstream meta;
-            if (!updated.empty()) meta << luPrefix << " " << esc(updated) << " · ";
-            meta << rt;
-            std::string updatedText = meta.str();   // 纯文本（LastUpdated 组件包 <div class="page-meta">）
-            // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
-            int depth = 0;   // 页面相对语言根的目录深度（guide/install → 1），修正 hreflang 相对路径
-            { size_t pos = 0; while ((pos = pages[i].file.find('/', pos)) != std::string::npos) { ++depth; ++pos; } }
-            headDataStore[i] = build_head_data(
-                pages[i].file, depth, pages[i].title, pages[i].desc,
-                pages[i].dateT, pages[i].dateT, true, crumbs,
-                (i > 0) ? pages[i - 1].file : std::string(),
-                (i + 1 < pages.size()) ? pages[i + 1].file : std::string());
-            // 阶段 1 产物暂存到 pages[i] 之外（避免跨线程重读 pages 元素）：面包屑/元信息/head 数据
-            {
-                // 地图模式面包屑：{links:[有 href], texts:[纯文本], current}（CrumbLink/CrumbText/CrumbCurrent）
-                json cm = json::object();
-                cm["links"] = json::array();
-                cm["texts"] = json::array();
-                for (const auto& item : crumbsJson) {
-                    if (item.value("current", false)) cm["current"] = item["title"];
-                    else if (!item.value("href", "").empty()) cm["links"].push_back(item);
-                    else cm["texts"].push_back(item);
-                }
-                if (!cm.contains("current")) cm["current"] = "";
-                crumbsMapStore[i] = cm;
-            }
-            metaStore[i] = updatedText;          // 纯文本（LastUpdated 组件渲染 <div class="page-meta">）
-        };
-        auto emit_page = [&](size_t i) {
-            if (skip[i]) return;   // 增量跳过（阶段 1 已复用旧产物）
-            // 子目录页面（如 guide/install.html）需要 ../ 前缀修正导航/资源相对路径
-            std::string relBase;
-            {
-                size_t pos = 0;
-                while ((pos = pages[i].file.find('/', pos)) != std::string::npos) { relBase += "../"; ++pos; }
-            }
-            // 文档页 → PageCtx（地图模式数据）
-            PageCtx ctx;
-            ctx.nav_groups = nav_groups_json(cfg.nav, pages[i].file, relBase);
-            ctx.toc_items = tocItemsStore[i];
-            ctx.pager = pager_json(pages, i, relBase);
-            ctx.breadcrumb_map = crumbsMapStore[i];
-            ctx.edit = edit_json(cfg, pages[i].file);
-            ctx.body = pages[i].html;
-            ctx.title = pages[i].title;
-            ctx.desc = pages[i].desc;
-            ctx.last_updated = metaStore[i];
-            auto beIt = g_body_ends.find(curLocale);
-            ctx.body_end = (beIt != g_body_ends.end()) ? beIt->second : "";
-            ctx.head_meta = headDataStore[i].value("meta", json::object());
-            ctx.head_links = headDataStore[i].value("links", json::array());
-            ctx.jsonld = headDataStore[i].value("jsonld", "");
-            ctx.curLocale = curLocale; ctx.lang_data = langData;
-            ctx.i18nJson = i18nJson; ctx.relBase = relBase;
-            std::string page = map_render_page(cfg, opt, ctx, typeForMode("pages", "doc"));
-            fs::path pageOut = locOut / (pages[i].file + ".html");
-            std::error_code pe2;
-            fs::create_directories(pageOut.parent_path(), pe2);   // 子目录路由需建父目录
-            std::ofstream(pageOut)
-                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
-            // front matter aliases：为每个旧路径生成重定向页（canonical + meta refresh + JS 兜底，
-            // 对标 Hugo aliases —— 文档改名后旧链接自动指向新页）
-            for (const auto& a : pages[i].aliases) {
-                std::string alias = a;
-                while (!alias.empty() && (alias.front() == '/' || alias.front() == '\\')) alias = alias.substr(1);
-                if (alias.empty()) continue;
-                fs::path af = locOut / (alias + ".html");
-                std::error_code aec;
-                fs::create_directories(af.parent_path(), aec);
-                std::error_code a2;
-                fs::path tgt = fs::relative(pageOut, af.parent_path(), a2);
-                std::string rel = a2 ? std::string("index.html") : tgt.generic_string();
-                for (auto& c : rel) if (c == '\\') c = '/';
-                std::string rd = "<!DOCTYPE html>\n<html lang=\"" + esc_attr(curLocale) + "\">\n<head>\n"
-                    "  <meta charset=\"utf-8\">\n"
-                    "  <title>" + esc(pages[i].title) + "</title>\n"
-                    "  <link rel=\"canonical\" href=\"" + esc_attr(rel) + "\">\n"
-                    "  <meta http-equiv=\"refresh\" content=\"0; url=" + esc_attr(rel) + "\">\n"
-                    "  <script>location.replace(\"" + esc_attr(rel) + "\");</script>\n"
-                    "</head>\n<body><a href=\"" + esc_attr(rel) + "\">" + esc(pages[i].title) + "</a></body>\n</html>\n";
-                std::ofstream(af) << rd;
-            }
-            // 插件钩子：每页渲染写盘后（有插件时整体串行，保证时序与安全；
-            // 路径用绝对路径，插件进程 cwd 是插件目录，相对路径会解析失败）
-            if (hasPlugs)
-                run_plugin_hooks("on_page_rendered", json{
-                    {"file",   pages[i].file},
-                    {"locale", multi ? loc : ""},
-                    {"path",   fs::absolute(pageOut).string()}
-                });
-        };
-        // 阶段 1 暂存数组已在上面声明（crumbsStore 等）
-        if (hasPlugs) { for (size_t i = 0; i < pages.size(); ++i) render_content(i); }
-        else run_parallel(pages.size(), render_content);
-        if (hasPlugs) { for (size_t i = 0; i < pages.size(); ++i) emit_page(i); }
-        else run_parallel(pages.size(), emit_page);
-
-        // 8.5) 博客流（约定优于配置：md/blog/ 存在时启用）
-        //      详情页 blog/<name>.html（面包屑=首页/博客/标题，上下篇=博客邻篇）
-        //      + 列表页 blog/index.html + 分页 blog/page/N.html（每页 10 篇）
-        if (b.query_ready && b.query_out.contains("blog_order") && b.query_out["blog_order"].is_array()
-            && !b.query_out["blog_order"].empty()) {
-            fs::path blogDir = in_dir / "blog";
-            {
-                std::error_code bec2;
-                if (!(fs::exists(blogDir, bec2) && fs::is_directory(blogDir, bec2))) {
-                    fs::path rootBlog = in_dir.parent_path() / "blog";
-                    if (fs::exists(rootBlog, bec2) && fs::is_directory(rootBlog, bec2))
-                        blogDir = rootBlog;
-                }
-            }
-            fs::create_directories(locOut / "blog", ec);
-            // 文章渲染顺序由插件 blog_order（有序 file 列表）决定；引擎只做渲染
-            std::map<std::string, Page> pgMap;
-            for (const auto& bp : b.blog_posts) pgMap[bp.file] = bp;
-            const auto& qOrder = b.query_out["blog_order"];
-            for (size_t bi = 0; bi < qOrder.size(); ++bi) {
-                auto pit = pgMap.find(qOrder[bi].get<std::string>());
-                if (pit == pgMap.end()) continue;
-                Page p = pit->second;
-                if (p.draft && !includeDrafts) continue;
-                std::string rel = p.file.substr(5);          // "blog/xxx" → "xxx"
-                fs::path f = blogDir / (rel + ".md");
-                if (multi) {
-                    fs::path fl = blogDir / (rel + "." + loc + ".md");
-                    if (fs::exists(fl)) f = fl;
-                }
-                if (!fs::exists(f)) continue;
-                std::string mdRaw = read_file(f);
-                std::string md;
-                parse_front_matter(mdRaw, md);
-                p.html = render_doc_body(md, false);   // blog 正文跨语言共享，用默认中文标题
-                if (p.title.empty()) p.title = extract_title(md, rel);
-                std::string excerpt = collapse_ws(strip_tags(p.html));
-                if (excerpt.size() > 160) excerpt = truncate_utf8(excerpt, 160) + "…";
-                p.desc = excerpt;
-                // 面包屑数据（Breadcrumb 组件；博客详情页在 blog/ 下，链接相对本目录）
-                json bcJson = json::array();
-                bcJson.push_back(json{{"title", "{{home}}"}, {"href", "../index.html"}, {"current", false}});
-                bcJson.push_back(json{{"title", "{{navBlog}}"}, {"href", "index.html"}, {"current", false}});
-                bcJson.push_back(json{{"title", p.title}, {"href", ""}, {"current", true}});
-                json bcMap = json::object();
-                bcMap["links"] = json::array();
-                bcMap["texts"] = json::array();
-                for (const auto& item : bcJson) {
-                    if (item.value("current", false)) bcMap["current"] = item["title"];
-                    else if (!item.value("href", "").empty()) bcMap["links"].push_back(item);
-                    else bcMap["texts"].push_back(item);
-                }
-                if (!bcMap.contains("current")) bcMap["current"] = "";
-                // 元信息：发布日期 + 阅读时长（纯文本，LastUpdated 组件包 <div class="page-meta">）
-                auto [cjk, words] = count_words(strip_tags(p.html));
-                int mins = (int)std::ceil(cjk / 300.0 + words / 200.0);
-                if (mins < 1) mins = 1;
-                std::string pub = format_date_local(p.dateT);   // 本地时区，避免 UTC 倒退一天
-                std::string rt = dict.count("readingTime") ? dict.at("readingTime")
-                                                            : "约 {{minutes}} 分钟阅读（{{words}} 字）";
-                rt = subst_tokens(rt, {{"minutes", std::to_string(mins)}, {"words", std::to_string(cjk + words)}});
-                std::string meta = esc(pub) + " · " + rt;
-                // 上下篇数据（博客邻篇，缺位置灰——行业标准；链接相对 blog/ 目录）
-                // 邻篇 = 插件排序结果的前后项（机械索引，非查询）
-                json pagerBj;
-                pagerBj["show"] = (bi > 0) || (bi + 1 < qOrder.size());
-                if (bi > 0) {
-                    auto pit2 = pgMap.find(qOrder[bi - 1].get<std::string>());
-                    if (pit2 != pgMap.end())
-                        pagerBj["prev"] = json{{"show", true}, {"title", pit2->second.title},
-                                               {"href", pit2->second.file.substr(5) + ".html"}};
-                    else pagerBj["prev"] = json{{"show", false}};
-                } else pagerBj["prev"] = json{{"show", false}};
-                if (bi + 1 < qOrder.size()) {
-                    auto nit = pgMap.find(qOrder[bi + 1].get<std::string>());
-                    if (nit != pgMap.end())
-                        pagerBj["next"] = json{{"show", true}, {"title", nit->second.title},
-                                               {"href", nit->second.file.substr(5) + ".html"}};
-                    else pagerBj["next"] = json{{"show", false}};
-                } else pagerBj["next"] = json{{"show", false}};
-                // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
-                json hd = build_head_data(p.file, 1, p.title, p.desc, p.dateT, p.dateT, true, {}, "", "");
-                TocResult t = build_toc(p.html);
-                // 博客详情页 → PageCtx
-                PageCtx ctx;
-                ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../");
-                ctx.head_meta = hd.value("meta", json::object());
-                ctx.head_links = hd.value("links", json::array());
-                ctx.jsonld = hd.value("jsonld", "");
-                ctx.toc_items = t.items;
-                ctx.pager = pagerBj;
-                ctx.breadcrumb_map = bcMap;
-                ctx.edit = json{{"show", false}};
-                ctx.body = t.html;
-                ctx.title = p.title;
-                ctx.desc = p.desc;
-                ctx.last_updated = meta;
-                auto beIt2 = g_body_ends.find(curLocale);
-                ctx.body_end = (beIt2 != g_body_ends.end()) ? beIt2->second : "";
-                ctx.curLocale = curLocale; ctx.lang_data = langData;
-                ctx.i18nJson = i18nJson; ctx.relBase = "../";
-                std::string page = map_render_page(cfg, opt, ctx, typeForMode("blog-post", "blog-post"));
-                std::ofstream(locOut / "blog" / (rel + ".html"))
-                    << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
-            }
-            // 列表页 + 分页：第一页 blog/index.html，后续 blog/page/N.html
-            // （列表页在 blog/ 下 relBase="../"；分页页在 blog/page/ 下 relBase="../../"）
-            // 分页分组由插件 blog_pages 决定（每页 file 数组）；引擎只渲染 + 生成分页导航
-            {
-                json qPages = b.query_out.value("blog_pages", json::array());
-                if (!qPages.is_array()) qPages = json::array();
-                size_t pagesN = qPages.size();
-                for (size_t pi = 0; pi < pagesN; ++pi) {
-                    bool isPageSub = (pi > 0);                  // 分页页位于 blog/page/
-                    std::string relBase = isPageSub ? "../../" : "../";
-                    std::string cardBase = isPageSub ? "../" : "";   // 卡片链接前缀
-                    std::string navBase  = isPageSub ? "../" : "";   // 分页导航链接前缀
-                    // 博客列表数据（BlogList/BlogCard 组件渲染；分页 BlogPager 数据化）
-                    json posts = json::array();
-                    for (const auto& fl : qPages[pi]) {
-                        auto pit = pgMap.find(fl.get<std::string>());
-                        if (pit == pgMap.end()) continue;
-                        const Page& p = pit->second;
-                        posts.push_back(json{{"date", format_date_local(p.dateT)},
-                                             {"href", cardBase + p.file.substr(5) + ".html"},
-                                             {"title", p.title}, {"desc", p.desc}});
-                    }
-                    auto pageHref = [&](size_t pp) {
-                        if (pp == 0) return navBase + "index.html";
-                        return navBase + "page/" + std::to_string(pp + 1) + ".html";
-                    };
-                    json bp = json::object();
-                    bp["show"] = (pagesN > 1);
-                    if (pagesN > 1) {
-                        if (pi > 0) bp["prev_href"] = pageHref(pi - 1);
-                        if (pi + 1 < pagesN) bp["next_href"] = pageHref(pi + 1);
-                        bp["cur"] = json{{"num", pi + 1}};
-                        bp["pages"] = json::array();
-                        for (size_t pp = 0; pp < pagesN; ++pp)
-                            bp["pages"].push_back(json{{"num", pp + 1}, {"href", pageHref(pp)}});
-                    }
-                    // 博客列表页 → PageCtx（BlogList/BlogCard/BlogPager 组件渲染）
-                    PageCtx ctx;
-                    ctx.blog_posts = posts;
-                    ctx.blog_pager = bp;
-                    ctx.title = "{{blogTitle}}";
-                    ctx.desc = cfg.description;
-                ctx.curLocale = curLocale; ctx.lang_data = langData;
-                ctx.i18nJson = i18nJson; ctx.relBase = relBase;
-                ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase);
-                std::string page = map_render_page(cfg, opt, ctx, typeForMode("blog-list", "blog"));
-                    if (pi == 0)
-                        std::ofstream(locOut / "blog" / "index.html")
-                            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
-                    else {
-                        fs::create_directories(locOut / "blog" / "page", ec);
-                        std::ofstream(locOut / "blog" / "page" / (std::to_string(pi + 1) + ".html"))
-                            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, dict)), locOut) : i18n_replace(page, dict));
-                    }
-                }
-            }
-        }
-
-        // 8) 搜索索引（每语言独立，内容取自该语言正文；标题走 i18n 字典解析）
-        {   // 合并博客文章进索引（file 带 blog/ 前缀，链接相对当前语言目录正确）
-            std::vector<Page> allPages = pages;
-            allPages.insert(allPages.end(), b.blog_posts.begin(), b.blog_posts.end());
-            gen_search_index(allPages, includeDrafts, dict, locOut);
-        }
-
-        // 9) 标签聚合页：基于 front matter 的 tags，自动生成每个标签一个列表页 + 总览页
-        //    （tags 页位于 tags/ 子目录：relBase="../"；博客文章也参与聚合，链接 ../blog/xxx.html）
-        {
-            if (b.query_ready && b.query_out.contains("tags") && b.query_out["tags"].is_array()
-                && !b.query_out["tags"].empty()) {
-                fs::create_directories(locOut / "tags", ec);
-                // 标签聚合由插件完成（tags 数组 + tag_pages 每标签 file 列表）；引擎只渲染
-                std::map<std::string, const Page*> pgMap;
-                for (const auto& p : pages) pgMap[p.file] = &p;
-                for (const auto& p : b.blog_posts) pgMap[p.file] = &p;
-                json tags = b.query_out["tags"];
-                // tags 聚合页 → PageCtx（TagOverview/TagItem 组件渲染）
-                PageCtx ctx;
-                ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
-                ctx.tags = tags;
-                ctx.title = "{{allTags}}";
-                ctx.desc = cfg.description;
-                ctx.curLocale = curLocale; ctx.lang_data = langData;
-                ctx.i18nJson = i18nJson; ctx.relBase = "../";
-                std::string ov = map_render_page(cfg, opt, ctx, typeForMode("tags", "tags"));
-                std::ofstream(locOut / "tags" / "index.html")
-                    << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, dict)), locOut) : i18n_replace(ov, dict));
-                const json& tagPages = b.query_out.contains("tag_pages")
-                                        ? b.query_out["tag_pages"] : json::object();
-                for (auto it = tagPages.begin(); it != tagPages.end(); ++it) {
-                    const std::string& tname = it.key();
-                    // 标签单页数据（TagPage/TagDocItem 组件渲染；docs 顺序由插件给出）
-                    json docs = json::array();
-                    for (const auto& fl : it.value()) {
-                        auto pit = pgMap.find(fl.get<std::string>());
-                        if (pit == pgMap.end()) continue;
-                        const Page& p = *pit->second;
-                        std::string d = (p.file.size() > 5 && p.file.compare(0, 5, "blog/") == 0)
-                                        ? format_date_local(p.dateT) : "";
-                        docs.push_back(json{{"href", "../" + p.file + ".html"}, {"title", p.title},
-                                            {"date", d}, {"desc", std::string()}});
-                    }
-                    PageCtx tctx;
-                    tctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
-                    tctx.tag_name = tname;
-                    tctx.tag_docs = docs;
-                    tctx.title = "#" + tname;
-                    tctx.desc = cfg.description;
-                    tctx.curLocale = curLocale; tctx.lang_data = langData;
-                    tctx.i18nJson = i18nJson; tctx.relBase = "../";
-                    std::string tp = map_render_page(cfg, opt, tctx, typeForMode("tag-page", "tag-page"));
-                    std::ofstream(locOut / "tags" / (slugify(tname) + ".html"))
-                        << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(tp, dict)), locOut) : i18n_replace(tp, dict));
-                }
-            }
-        }
-
-        // 10) single 通用单页（maps 注册表 mode=single：404 + 第三方自定义单页统一入口。
-        //     output 自定输出文件名（默认 <type>.html）；页面结构/内容由地图 + 地图 data + props 完全自定义）
-        for (const auto& e : maps) {
-            if (!e.is_object() || e.value("mode", "") != "single") continue;
-            std::string stype = e.value("type", "");
-            if (stype.empty()) continue;
-            std::string output = e.value("output", "");
-            if (output.empty()) output = stype + ".html";
-            PageCtx ctx;
-            ctx.nav_groups = nav_groups_json(cfg.nav, "", "");
-            ctx.title = (stype == "404") ? "404" : cfg.title;
-            ctx.desc = cfg.description;
-            ctx.curLocale = curLocale; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
-            std::string sp = map_render_page(cfg, opt, ctx, stype);
-            std::ofstream(locOut / output)
-                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(sp, dict)), locOut) : i18n_replace(sp, dict));
-        }
-
-        // 11) RSS / JSON Feed（行业标准，内建，无需 Node；博客文章并入订阅流）
-        {
-            std::vector<Page> allPages = pages;
-            allPages.insert(allPages.end(), b.blog_posts.begin(), b.blog_posts.end());
-            gen_feeds(locOut, loc, allPages, cfg, dict, multi);
-        }
-        // 12) PWA（manifest + service worker + theme-color），内建替代 gen-pwa.js
-        gen_pwa(locOut, cfg, feedTitle, theme_root() / "assets");
+        render_one_locale(b, maps, loc, multi, dict, asig, assetsChanged);
     }
+
     // 死链检查放在全部语言构建完成后统一执行（避免语言切换链接在兄弟语言目录
     // 尚未生成时被误报）；对标 VitePress/MkDocs 的链接校验，结果末尾告警不阻断。
     for (const auto& loc : locs) {
@@ -1581,229 +1584,6 @@ static void render_locales(BuildContext& b) {
     }
     // 全部语言复制完成后统一写资产签名（源变化时刷新了所有语言目录）
     if (assetsChanged) { std::ofstream f(aSigFile); f << aCur; }
-}
-
-// 4) 多语言根 index.html 重定向到默认语言（单语言模式已在循环中生成，无需重定向）
-static void write_root_redirect(BuildContext& b) {
-    I18nCfg& i18n = b.i18n;
-    const fs::path& out_dir = b.out_dir;
-
-    // 根目录 index.html：多语言模式下重定向到默认语言（单语言模式已在循环中生成，无需重定向）
-    if (i18n.enabled) {
-        std::string target = i18n.defaultLocale + "/index.html";
-        std::ofstream(out_dir / "index.html") <<
-            "<!DOCTYPE html>\n<html lang=\"" << esc_attr(i18n.defaultLocale) << "\">\n<head>\n"
-            "  <meta charset=\"utf-8\">\n  <title>Redirecting…</title>\n"
-            "  <meta http-equiv=\"refresh\" content=\"0; url=./" << esc_attr(target) << "\">\n"
-            "  <link rel=\"canonical\" href=\"./" << esc_attr(target) << "\">\n"
-            "</head>\n<body>\n  <p>正在跳转到 <a href=\"./" << esc_attr(target) << "\">"
-            << esc(i18n.defaultLocale) << "</a> …</p>\n</body>\n</html>\n";
-    }
-}
-
-// 5) 根目录额外生成默认语言 feed 与 PWA（供根 index.html 重定向页使用）
-static void write_root_feeds_pwa(BuildContext& b) {
-    SiteConfig& cfg = b.cfg;
-    I18nCfg& i18n = b.i18n;
-    I18nDict& fallbackUI = b.fallbackUI;
-    std::vector<Page>& pages = b.pages;
-    const fs::path& out_dir = b.out_dir;
-
-    // i18n 站点：在 dist 根额外生成默认语言 feed 与 PWA（供根 index.html 重定向页使用）
-    if (i18n.enabled) {
-        const I18nDict& dDict = i18n.dicts.count(i18n.defaultLocale) ? i18n.dicts.at(i18n.defaultLocale) : fallbackUI;
-        std::vector<Page> allPages = pages;
-        allPages.insert(allPages.end(), b.blog_posts.begin(), b.blog_posts.end());
-        gen_feeds(out_dir, i18n.defaultLocale, allPages, cfg, dDict, true, /*silent=*/true);
-        gen_pwa(out_dir, cfg, i18n_replace(cfg.title, dDict), theme_root() / "assets");
-    }
-}
-
-// 6) sitemap.xml（SEO 标配）：多语言列出全部语言 URL + hreflang 交替；单语言与旧行为一致
-static void write_sitemap(BuildContext& b) {
-    const SiteConfig& cfg = b.cfg;
-    const I18nCfg& i18n = b.i18n;
-    const std::vector<Page>& pages = b.pages;
-    const bool& includeDrafts = b.includeDrafts;
-    const fs::path& out_dir = b.out_dir;
-
-    // 9) sitemap.xml（SEO 标配）：多语言列出全部语言 URL + hreflang 交替；单语言与旧行为一致
-    if (!cfg.url.empty()) {
-        std::string base = cfg.url;
-        if (!base.empty() && base.back() != '/') base += '/';
-        std::ostringstream sm;
-        sm << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-           << "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"\n"
-           << "        xmlns:xhtml=\"http://www.w3.org/1999/xhtml\">\n";
-        auto emit = [&](const std::string& rel) {
-            sm << "  <url><loc>" << base << esc_attr(rel) << "</loc>\n";
-            if (i18n.enabled) {
-                // rel 形如 "zh-CN/index.html"，去掉语言前缀得到页面路径 "index.html"
-                std::string pageRel = rel;
-                size_t slash = rel.find('/');
-                if (slash != std::string::npos) pageRel = rel.substr(slash + 1);
-                for (auto& kv : i18n.labels) {
-                    std::string other = base + kv.first + "/" + pageRel;
-                    sm << "    <xhtml:link rel=\"alternate\" hreflang=\"" << esc_attr(kv.first)
-                       << "\" href=\"" << other << "\"/>\n";
-                }
-                // x-default 指向默认语言版本（多语言 SEO 标准）
-                sm << "    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\""
-                    << base << i18n.defaultLocale << "/" << pageRel << "\"/>\n";
-            }
-            sm << "  </url>\n";
-        };
-        int pub = 0; for (const auto& p : pages) if (!p.draft) ++pub;
-        if (i18n.enabled) {
-            for (auto& kv : i18n.labels) emit(kv.first + "/index.html");
-            for (const auto& p : pages) { if (p.draft && !includeDrafts) continue; for (auto& kv : i18n.labels) emit(kv.first + "/" + p.file + ".html"); }
-        } else {
-            emit("index.html");
-            for (const auto& p : pages) { if (p.draft && !includeDrafts) continue; emit(p.file + ".html"); }
-        }
-        sm << "</urlset>\n";
-        std::ofstream(out_dir / "sitemap.xml") << sm.str();
-        std::cout << color::green("已生成 sitemap.xml") << "（"
-                  << (i18n.enabled ? pub * i18n.labels.size() + i18n.labels.size()
-                                   : pub + 1) << " 个 URL）\n";
-    } else {
-        std::cout << color::warn("提示: ") << "在 config.json 设置 url 即可生成 sitemap.xml（SEO）\n";
-    }
-}
-
-// 7) robots.txt（标准：允许抓取，附 sitemap 地址）
-static void write_robots(BuildContext& b) {
-    const SiteConfig& cfg = b.cfg;
-    const fs::path& out_dir = b.out_dir;
-
-    // 11) robots.txt（标准：允许抓取，附 sitemap 地址）
-    {
-        std::ostringstream rb;
-        rb << "User-agent: *\nAllow: /\n";
-        if (!cfg.url.empty()) {
-            std::string u = cfg.url; if (!u.empty() && u.back() != '/') u += '/';
-            rb << "Sitemap: " << u << "sitemap.xml\n";
-        }
-        std::ofstream(out_dir / "robots.txt") << rb.str();
-    }
-}
-
-// 8) 构建汇总输出（发布的文档数 + 文件清单 + 配置/插件摘要）
-static void print_summary(BuildContext& b) {
-    const SiteConfig& cfg = b.cfg;
-    const I18nCfg& i18n = b.i18n;
-    const I18nDict& fallbackUI = b.fallbackUI;
-    const std::vector<Page>& pages = b.pages;
-    const bool& includeDrafts = b.includeDrafts;
-    const fs::path& out_dir = b.out_dir;
-
-    int published = 0; for (const auto& p : pages) if (!p.draft || includeDrafts) ++published;
-    std::cout << color::green("已生成 ") << published << color::green(" 篇文档到 ") << out_dir << "\n";
-    const I18nDict& defDict = (i18n.enabled && i18n.dicts.count(i18n.defaultLocale))
-                                  ? i18n.dicts.at(i18n.defaultLocale) : fallbackUI;
-    if (!g_quiet) {
-        for (const auto& p : pages) {
-            if (p.draft && !includeDrafts) continue;
-            std::cout << "  - " << color::cyan(p.file + ".html") << color::muted("  (")
-                      << i18n_replace(p.title, defDict) << color::muted(")\n");
-        }
-        std::cout << color::muted("配置: config.json + route/ | 插件: ");
-        for (const auto& p : cfg.plugins) std::cout << color::blue(p) << " ";
-        if (cfg.plugins.empty()) std::cout << color::muted("(默认全开)");
-        std::cout << (cfg.themeVars.empty() ? std::string("") : color::muted(" | 已注入主题变量")) << "\n";
-    }
-    // i18n 键缺失告警：写错键名 / 字典缺翻译时，页面会显示 {{key}} 字面量，构建期及时指出（不阻塞构建）
-    if (!g_i18n_missing.empty() && !g_quiet) {
-        std::vector<std::string> uniq;
-        for (const auto& k : g_i18n_missing)
-            if (std::find(uniq.begin(), uniq.end(), k) == uniq.end()) uniq.push_back(k);
-        std::cerr << color::yellow("\n⚠ 警告：") << uniq.size()
-                  << " 个 i18n 键在字典中缺失（页面将显示 {{key}} 字面量）：\n";
-        for (const auto& k : uniq) std::cerr << "    " << k << "\n";
-    }
-    // 死链告警：站内相对链接指向不存在的目标（对标 VitePress/MkDocs 的链接校验，不阻塞构建）
-    if (!g_link_broken.empty() && !g_quiet) {
-        std::cerr << color::yellow("\n⚠ 警告：发现 ") << g_link_broken.size()
-                  << " 个站内链接目标不存在（死链）：\n";
-        for (const auto& s : g_link_broken) std::cerr << "    " << s << "\n";
-    }
-}
-
-// ============ L2: 构建期残留检测（把模板语法的"静默失败"变成显式警告） ============
-// 扫描输出目录所有 .html，三类残留（对标 Hugo/Vue/Astro 的 fail-fast 哲学，不阻塞构建）：
-//   1) 模板块残留 {{ if/each/else/end ... }} → 语法错误级警告（页面将显示语法原文，
-//      通常是对应块未闭合，tpl_render 无法定位匹配的 {{ end }}）
-//   2) 未解析数据键 {{含下划线的 key}} → 警告（模板数据键拼错；
-//      纯单词/驼峰键是客户端 i18n（{{navHome}}/{{minutes}}），保留给前端 JS 替换，不报）
-//   3) 大写组件标签残留 <PascalCase> → 警告（组件未展开，通常因组件文件缺失/循环引用，
-//      或 expand 未覆盖到该处；跳过 <pre> 代码块内的示例）
-static void scan_output_leftovers(const fs::path& outDir) {
-    std::error_code ec;
-    if (!fs::is_directory(outDir, ec)) return;
-    int total = 0;
-    for (auto it = fs::recursive_directory_iterator(outDir, ec), end = fs::recursive_directory_iterator();
-         it != end; it.increment(ec)) {
-        if (ec) { ec.clear(); continue; }
-        if (!it->is_regular_file(ec)) continue;
-        if (it->path().extension().string() != ".html") continue;
-        std::string html = read_file(it->path());
-        // 剔除 <pre>...</pre> 代码块（文档示例会故意包含 {{}} / 大写标签）
-        std::string s;
-        {
-            size_t i = 0;
-            while (i < html.size()) {
-                size_t pre = html.find("<pre", i);
-                if (pre == std::string::npos) { s += html.substr(i); break; }
-                s += html.substr(i, pre - i);
-                size_t pe = html.find("</pre>", pre + 4);
-                if (pe == std::string::npos) { s += html.substr(pre); break; }
-                i = pe + 6;
-            }
-        }
-        if (s.empty()) continue;
-        std::vector<std::string> found;
-        static const std::regex reBlock(R"(\{\{\s*(if|each|else|end)\b[^}]*\}\})");
-        static const std::regex reKey(R"(\{\{[a-z][a-z0-9_]*_[a-z0-9_.]*\}\})");
-        static const std::regex reComp(R"(<([A-Z][A-Za-z0-9]*)(\s[^>]*)?\s*\/?>)");
-        for (auto m = std::sregex_iterator(s.begin(), s.end(), reBlock); m != std::sregex_iterator(); ++m)
-            found.push_back("模板块残留 " + m->str());
-        for (auto m = std::sregex_iterator(s.begin(), s.end(), reKey); m != std::sregex_iterator(); ++m) {
-            // 教学文档会故意展示 {{left_nav}} 这类占位符示例（行内 <code>）——
-            // 键在合法集合（当前 data 键 + fallback 历史键）中则跳过，只有真拼错的键才报
-            static const std::set<std::string> kLegacyKeys = {
-                // fallback 时代的模板占位符键（themes.md 等教学文档仍在展示）
-                "skip_link","header","left_nav","breadcrumb","edit_link","pager","toc_sidebar",
-                "footer","back_to_top","highlight_js","search_js","i18n_json","feedback_js",
-                "highlight_css","meta_desc","custom_head","last_updated","body","body_class",
-                // shortcode 组件数据孔（shortcodes.md 等教学文档展示 {{slot}}/{{slot_raw}}）
-                "slot","slot_raw",
-                // shortcode 组件数据孔（shortcodes.md 等教学文档展示 {{slot}}/{{slot_raw}}）
-                "slot","slot_raw",
-                // 组件子块键（Header/Footer/CardGrid 拆分时的数据键，文档有展示）
-                "left_nav_tree","cards_html","menu_toggle","logo","topnav","search","header_nav",
-                "locale_switch","version_select","theme_toggle","github_link",
-                "footer_show","footer_text","footer_links","extra_head"
-            };
-            std::string key = m->str();
-            key = key.substr(2, key.size() - 4);          // 剥掉 {{ }}
-            if (g_tpl_keys.count(key) || kLegacyKeys.count(key)) continue;
-            found.push_back("未解析数据键 " + m->str());
-        }
-        for (auto m = std::sregex_iterator(s.begin(), s.end(), reComp); m != std::sregex_iterator(); ++m)
-            found.push_back("未展开组件 <" + m->str(1) + ">");
-        if (found.empty()) continue;
-        std::sort(found.begin(), found.end());
-        found.erase(std::unique(found.begin(), found.end()), found.end());
-        total += (int)found.size();
-        if (!g_quiet) {
-            std::cerr << color::warn("警告: ") << "模板残留 " << found.size() << " 处 → "
-                      << fs::relative(it->path(), outDir).string() << "\n";
-            for (const auto& f : found) std::cerr << "      · " << f << "\n";
-        }
-    }
-    if (total && !g_quiet)
-        std::cout << color::muted("  残留检查: ") << color::red(std::to_string(total))
-                  << color::muted(" 处模板残留（{{}} 模板块/数据键/组件标签），请检查上方警告\n");
 }
 
 // --clean 原子替换：把旧输出目录 rename 为 <out>.old（瞬时 O(1)），
@@ -1818,138 +1598,11 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
     g_link_broken.clear();
     g_tpl_keys.clear();
 
-    // ---- 版本化文档分派（Docusaurus 风格）----
-    // 仅最外层调用执行版本循环（static 重入锁：子版本构建不再分派，避免无限递归）。
-    // 先探测 config.json 的 versions 列表；非空则对每个版本独立构建到 dist/<name>/，
-    // 并在全部完成后生成根 index.html 重定向到默认版本。单版本站点完全不走此分支。
-    static bool s_version_dispatching = false;
-    if (!s_version_dispatching) {
-        s_version_dispatching = true;
-        fs::path cfgp = g_engine / "config/config.json";
-        std::vector<VersionCfg> vers;
-        if (fs::exists(cfgp)) {
-            try {
-                json j = json::parse(read_file(cfgp));
-                json site = j.contains("site") && j["site"].is_object() ? j["site"] : j;
-                if (site.contains("versions") && site["versions"].is_array()) {
-                    for (auto& v : site["versions"]) {
-                        if (!v.is_object() || !v.contains("name")) continue;
-                        VersionCfg vc;
-                        vc.name = v["name"].get<std::string>();
-                        vc.label = v.value("label", vc.name);
-                        vc.source = v.value("source", std::string());
-                        vc.default_v = v.value("default", false);
-                        vers.push_back(std::move(vc));
-                    }
-                    if (!vers.empty() && !vers[0].default_v) {
-                        bool any = false;
-                        for (auto& v : vers) if (v.default_v) { any = true; break; }
-                        if (!any) vers[0].default_v = true;
-                    }
-                }
-            } catch (...) { vers.clear(); }
-        }
-
-        // 约定优于配置：config 未声明 versions 时，自动扫描 in_dir 同级下的
-        // "<源目录名>-*" 快照目录（如 md/ 旁的 md-v1/、md-v2/）识别为历史版本。
-        // md/ 恒为 current（默认版）；无任何快照目录 → 单版本，行为与旧版完全一致。
-        if (vers.empty()) {
-            std::string base = in_dir.filename().string();   // 如 "md"
-            // in_dir 可能是相对路径（如 "md"），parent_path() 为空 → 用 "." 表示项目根
-            fs::path parent = in_dir.parent_path();
-            if (parent.empty()) parent = fs::path(".");
-            std::error_code sec;
-            if (fs::exists(parent, sec) && fs::is_directory(parent, sec)) {
-                std::vector<std::string> snapshots;
-                for (auto& e : fs::directory_iterator(parent, sec)) {
-                    if (!e.is_directory(sec)) continue;
-                    std::string name = e.path().filename().string();
-                    // 匹配 "<base>-<suffix>"，且排除 .Cdocs/.build/dist 等隐藏/产物目录
-                    if (name.size() > base.size() + 1 && name.compare(0, base.size(), base) == 0
-                        && name[base.size()] == '-' && name[0] != '.') {
-                        snapshots.push_back(name);
-                    }
-                }
-                if (!snapshots.empty()) {
-                    // current 恒为首位 + 默认；历史版本按名排序（md-v1 < md-v2 < ...）
-                    std::sort(snapshots.begin(), snapshots.end());
-                    VersionCfg cur;
-                    cur.name = "current";
-                    cur.label = "最新";
-                    cur.default_v = true;
-                    vers.push_back(std::move(cur));
-                    for (auto& s : snapshots) {
-                        VersionCfg vc;
-                        vc.name = s.substr(base.size() + 1);   // md-v1 → v1
-                        vc.label = vc.name;                    // label 默认即版本名
-                        vc.source = s;
-                        vers.push_back(std::move(vc));
-                    }
-                    if (!g_quiet)
-                        std::cout << color::muted("  [versions] 自动识别 ") << snapshots.size()
-                                  << " 个历史版本: ";
-                    for (auto& v : vers)
-                        if (!g_quiet) std::cout << color::cyan(v.name) << " ";
-                    if (!g_quiet) std::cout << "\n";
-                }
-            }
-        }
-
-        if (!vers.empty()) {
-            // 多版本模式：dist 整体重建（每个版本独立子目录）
-            if (cleanBefore) {
-                std::error_code ec2;
-                fs::remove_all(out_dir, ec2);
-            }
-            std::string defName;
-            for (const auto& v : vers) if (v.default_v) defName = v.name;
-
-            // 把完整版本列表序列化传给子构建（供 header 版本下拉）
-            {
-                json va = json::array();
-                for (const auto& v : vers) {
-                    va.push_back({{"name", v.name}, {"label", v.label},
-                                  {"source", v.source}, {"default", v.default_v}});
-                }
-                g_versions_json = va.dump();
-            }
-
-            for (const auto& v : vers) {
-                // 版本源目录：source 为空用主 in_dir（md）；否则取 in_dir 同级下的 <source>
-                // （in_dir 可能为相对路径，parent 为空时用 "." 表示项目根）
-                fs::path parent = in_dir.parent_path();
-                if (parent.empty()) parent = fs::path(".");
-                fs::path vIn  = in_dir;
-                if (!v.source.empty() && v.source != in_dir.filename().string())
-                    vIn = parent / v.source;
-                fs::path vOut = out_dir / v.name;
-                if (!g_quiet)
-                    std::cout << color::bold(color::cyan("\n=== 构建版本 "))
-                              << color::cyan(v.label) << color::bold(color::cyan(" → ")) << vOut << "\n";
-                // 版本信息通过全局传给子构建：内部 load_site_config 读取
-                g_cur_version = v.name;
-                g_cur_version_label = v.label;
-                int rc = run_build(vIn, vOut, includeDrafts, false);
-                g_cur_version.clear();
-                g_cur_version_label.clear();
-                if (rc) { g_versions_json.clear(); s_version_dispatching = false; return rc; }
-            }
-            g_versions_json.clear();
-            // 根 index.html：重定向到默认版本（Docusaurus 同款行为）
-            if (!defName.empty()) {
-                std::ofstream(out_dir / "index.html")
-                    << "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
-                    << "  <meta charset=\"utf-8\">\n  <title>Redirecting…</title>\n"
-                    << "  <meta http-equiv=\"refresh\" content=\"0; url=./" << esc_attr(defName) << "/index.html\">\n"
-                    << "  <link rel=\"canonical\" href=\"./" << esc_attr(defName) << "/index.html\">\n"
-                    << "</head>\n<body>\n  <p>正在跳转到默认版本 <a href=\"./"
-                    << esc_attr(defName) << "/index.html\">" << esc(defName) << "</a> …</p>\n</body>\n</html>\n";
-            }
-            s_version_dispatching = false;
-            return 0;
-        }
-        s_version_dispatching = false;
-    }
+    // ---- 多版本分派（versions.cpp）----
+    // 命中多版本（config.versions 或 md-* 快照约定）则独立构建各版本并返回；
+    // 单版本 / 子构建重入时不处理，走下方单版本主流程。
+    if (dispatch_versions(in_dir, out_dir, includeDrafts, cleanBefore))
+        return 0;
 
     // 输出横幅 + --clean 清理（阶段 1 起的状态集中到 BuildContext）
 
@@ -2079,6 +1732,3 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
     scan_output_leftovers(out_dir);           // 9) 残留检测：{{}}/组件标签残留 → 显式警告
     return 0;
 }
-
-
-// ============ 内置 i18n 字典（新站点初始化用，确保完整可构建） ============

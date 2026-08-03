@@ -14,7 +14,7 @@ flowchart LR
   G --> DIST["dist/ 纯静态（HTML · SEO · RSS · PWA · search.json）"]
 ```
 
-## 生成器：20 个 C++ 模块
+## 生成器：22 个 C++ 模块
 
 生成器源码在 `src/`，按职责拆成模块（每个含 `.hpp` + `.cpp`），依赖方向严格向下：
 
@@ -37,12 +37,14 @@ flowchart LR
 | 渲染 | `markdown` | md4c 封装 + Admonitions 展开 |
 | 渲染 | `component` | 组件加载 / 数据孔填充 / 地图 sections 组合 / 站点数据 |
 | 渲染 | `shortcode` | 正文 shortcode 引擎（预扫描 / 展开 / style 去重 / 转义） |
-| 构建 | `builder` | `run_build` 纯编排（配置→收集→渲染→收尾产物） |
+| 构建 | `builder` | `run_build` 纯编排（配置→收集→渲染），`render_one_locale` 单语言渲染子函数 |
+| 构建 | `versions` | 多版本分派（config.versions 探测 + md-* 快照约定 + 根重定向） |
+| 构建 | `output` | 构建收尾产物（根重定向 / feed+PWA / sitemap / robots / 汇总 / 残留检测） |
 | 脚手架 | `scaffold` | `init` / `section` / `new` / `clean` 站点骨架命令 |
 | 编排 | `cli` | 命令注册表分发 / 统一 flag 解析 / 帮助 / 退出码 |
-| 诊断 | `diag` | `doctor` / `check` / `config` / `routes` 诊断命令 |
+| 诊断 | `diag` | `doctor` / `check` / `config` / `routes` / `theme` / `plugins` / `versions` 诊断命令 |
 
-> 演进：早期把渲染部件与脚手架命令都堆在 `builder.cpp`（一度 3200 行）；v2 拆出 `component` / `shortcode` / `scaffold` / `diag` 四个内聚子系统，`builder` 只留构建编排。
+> 演进：早期把渲染部件与脚手架命令都堆在 `builder.cpp`（一度 3200 行）；v2 拆出 `component` / `shortcode` / `scaffold` / `diag`；v3 再拆 `versions`（多版本分派）与 `output`（构建收尾），并把 `render_locales`（762 行）的单语言渲染循环体提取为 `render_one_locale` 子函数，`builder` 最终只留编排主流程。
 
 ## run_build：纯编排
 
@@ -50,12 +52,15 @@ flowchart LR
 
 1. `load_site_config` — 配置 + 导航 + 插件渲染开关
 2. `prepare_pages` — 输入检查 + 收集页面 + 预扫描 front matter
-3. `render_locales` — 多语言构建循环（核心：首页/文档页/search/标签/404/RSS/PWA）
+3. `render_locales` — 多语言构建循环（每语言调 `render_one_locale`）
+   - `render_one_locale` — 单语言渲染（assets/压缩/指纹/首页/文档页/博客/标签/404/RSS/PWA）
 4. `write_root_redirect` — 多语言根 index.html 重定向
 5. `write_root_feeds_pwa` — 根目录默认语言 feed / PWA
 6. `write_sitemap` — sitemap.xml
 7. `write_robots` — robots.txt
 8. `print_summary` — 汇总输出
+
+> `versions.cpp` 在 `run_build` 最外层执行版本分派（`dispatch_versions`）：命中多版本（config.versions 或 md-* 快照约定）则对每个版本独立调 `run_build` 并生成根重定向；单版本/子构建重入时不处理，走下方主流程。`output.cpp` 承载 4-9 阶段的收尾产物函数。
 
 ## 前端：引导 + ESM 模块图
 

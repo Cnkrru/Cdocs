@@ -111,20 +111,51 @@ int cmd_doctor() {
         }
     }
 
-    // 4) sidebar 登记
-    fs::path sbDir = g_engine / "config" / "sidebar";
-    int sbCount = 0;
-    if (fs::is_directory(sbDir, ec)) {
-        for (const auto& it : fs::directory_iterator(sbDir, ec))
-            if (it.is_regular_file(ec) && it.path().extension() == ".json") ++sbCount;
+    // 4) 路由登记（route/ 目录；兼容旧 sidebar/ 目录）
+    int rtCount = 0;
+    for (const fs::path& rd : { fs::path("config/route"), fs::path("config/sidebar") }) {
+        fs::path rtDir = g_engine / rd;
+        if (fs::is_directory(rtDir, ec))
+            for (const auto& it : fs::directory_iterator(rtDir, ec))
+                if (it.is_regular_file(ec) && it.path().extension() == ".json") ++rtCount;
     }
-    print_row("侧边栏登记", sbCount > 0 ? (std::to_string(sbCount) + " 个 sidebar 文件") : "无 sidebar 文件", sbCount > 0);
+    print_row("路由登记", rtCount > 0 ? (std::to_string(rtCount) + " 个 route 文件") : "无 route 文件", rtCount > 0);
 
-    // 5) 输出目录
+    // 5) 主题（themeName + themes/ 目录）
+    json cfgj = load_json(g_engine / "config" / "config.json");
+    json sitej = cfgj.contains("site") && cfgj["site"].is_object() ? cfgj["site"] : cfgj;
+    std::string themeName = sitej.value("themeName", "");
+    if (!themeName.empty()) {
+        bool tOk = fs::is_directory(g_engine / "themes" / themeName, ec)
+                   || fs::is_directory(fs::current_path() / "themes" / themeName, ec);
+        if (!tOk) ++errors;
+        print_row("主题 " + themeName, tOk ? ("themes/" + themeName) : ("themes/" + themeName + "（缺失，回退默认）"), tOk);
+    } else {
+        print_row("主题", "默认 .Cdocs/theme（未配置 themeName）", true);
+    }
+
+    // 6) 插件（.Cdocs/plugins/，含 plugin.json 注册）
+    int plugCount = 0;
+    if (fs::is_directory(g_engine / "plugins", ec))
+        for (const auto& it : fs::directory_iterator(g_engine / "plugins", ec))
+            if (it.is_directory(ec) && fs::is_regular_file(it.path() / "plugin.json", ec)) ++plugCount;
+    print_row("插件", plugCount > 0 ? (std::to_string(plugCount) + " 个已注册") : "无插件", true);
+
+    // 7) 版本（site.versions；未配置时约定优于配置扫描 md-* 快照）
+    if (sitej.contains("versions") && sitej["versions"].is_array() && !sitej["versions"].empty()) {
+        std::vector<std::string> vn;
+        for (const auto& v : sitej["versions"])
+            if (v.is_object() && v.contains("name")) vn.push_back(v["name"].get<std::string>());
+        print_row("版本", std::to_string(vn.size()) + " 个（" + join(vn, " / ") + "）", true);
+    } else {
+        print_row("版本", "单版本（未配置 versions）", true);
+    }
+
+    // 8) 输出目录
     bool distOk = fs::is_directory(g_dest, ec);
     print_row("输出目录", distOk ? g_dest.string() : (g_dest.string() + "（未构建，先运行 build）"), true);
 
-    // 6) 外部工具
+    // 9) 外部工具
     struct { const char* n; bool need; } tools[] = {
         { "git", false }, { "python", false }, { "node", false }, { "curl", false },
     };
@@ -178,15 +209,30 @@ int cmd_check() {
         return html;
     };
 
-    // 1) 死链检查（每语言目录）
-    int locales = 0, broken = 0;
+    // 1) 死链检查（每语言目录；多版本输出 dist/<ver>/<loc>/ 时递归一层）
+    std::vector<std::pair<fs::path, std::string>> langDirs;
     for (const auto& it : fs::directory_iterator(g_dest, ec)) {
         if (!it.is_directory(ec)) continue;
-        std::string loc = it.path().filename().string();
-        if (loc == "assets" || loc == "deps" || loc == "icons") continue;
-        check_links(it.path(), loc);
-        ++locales;
+        std::string n = it.path().filename().string();
+        if (n == "assets" || n == "deps" || n == "icons") continue;
+        // 一级目录内是否还有子目录（多版本：v2/zh-CN、v1/zh-CN）
+        bool nested = false;
+        std::error_code ec2;
+        for (const auto& sub : fs::directory_iterator(it.path(), ec2))
+            if (sub.is_directory(ec2)) { nested = true; break; }
+        if (nested) {
+            for (const auto& sub : fs::directory_iterator(it.path(), ec2)) {
+                if (!sub.is_directory(ec2)) continue;
+                std::string subn = sub.path().filename().string();
+                if (subn == "assets" || subn == "deps" || subn == "icons") continue;
+                langDirs.push_back({sub.path(), n + "/" + subn});
+            }
+        } else {
+            langDirs.push_back({it.path(), n});
+        }
     }
+    int locales = 0, broken = 0;
+    for (const auto& ld : langDirs) { check_links(ld.first, ld.second); ++locales; }
     broken = (int)g_link_broken.size();
     if (broken > 0) {
         for (const auto& b : g_link_broken) std::cerr << warn("  死链: ") << b << "\n";
@@ -246,8 +292,12 @@ int cmd_config() {
         };
         show("title"); show("langs"); show("url"); show("version");
         show("logo_text"); show("copyright");
+        if (s.contains("route") && s["route"].is_object())
+            std::cout << "  " << muted("route") << " = " << s["route"].dump() << "\n";
         if (s.contains("sidebar") && s["sidebar"].is_object())
-            std::cout << "  " << muted("sidebar") << " = " << s["sidebar"].dump() << "\n";
+            std::cout << "  " << muted("sidebar(兼容)") << " = " << s["sidebar"].dump() << "\n";
+        if (s.contains("versions") && s["versions"].is_array())
+            std::cout << "  " << muted("versions") << " = " << s["versions"].dump() << "\n";
     }
     std::cout << "  " << muted("theme") << " = " << (theme_root() / "theme.json").string() << "\n";
     if (map.contains("maps")) {
@@ -259,14 +309,15 @@ int cmd_config() {
             std::cout << "[ " << (t.empty() ? std::string("无") : join(t, " / ")) << " ]\n";
         } else std::cout << map["maps"].dump() << "\n";
     }
-    fs::path sb = g_engine / "config" / "sidebar";
     int n = 0;
-    if (fs::is_directory(sb)) {
-        std::error_code ec;
-        for (const auto& it : fs::directory_iterator(sb, ec))
-            if (it.is_regular_file(ec) && it.path().extension() == ".json") ++n;
+    for (const fs::path& rd : { fs::path("config/route"), fs::path("config/sidebar") }) {
+        fs::path sd = g_engine / rd;
+        std::error_code ec2;
+        if (fs::is_directory(sd, ec2))
+            for (const auto& it : fs::directory_iterator(sd, ec2))
+                if (it.is_regular_file(ec2) && it.path().extension() == ".json") ++n;
     }
-    std::cout << "  " << muted("sidebar 文件") << " = " << n << " 个\n";
+    std::cout << "  " << muted("route 文件") << " = " << n << " 个\n";
     return 0;
 }
 
@@ -283,8 +334,9 @@ int cmd_routes() {
 
     std::vector<std::string> files;
     std::set<std::string> seen;
-    fs::path sb = g_engine / "config" / "sidebar";
+    fs::path sb = g_engine / "config" / "route";
     std::error_code ec;
+    if (!fs::is_directory(sb, ec)) sb = g_engine / "config" / "sidebar";   // 兼容旧目录
     if (fs::is_directory(sb, ec)) {
         for (const auto& it : fs::directory_iterator(sb, ec)) {
             if (!it.is_regular_file(ec) || it.path().extension() != ".json") continue;
@@ -302,7 +354,7 @@ int cmd_routes() {
         }
     }
     if (files.empty()) {
-        std::cerr << error("sidebar 中未登记任何页面\n");
+        std::cerr << error("route 中未登记任何页面\n");
         return 1;
     }
     std::cout << cyan("页面路由清单") << muted("（") << lang << muted("，")
@@ -313,5 +365,125 @@ int cmd_routes() {
         std::string src = (g_source / f).string() + ".md";
         std::cout << "  " << green(url) << "  " << muted("← ") << src << "\n";
     }
+    return 0;
+}
+
+// ============================================================
+// theme：列出可用主题 + 当前生效主题
+// ============================================================
+int cmd_theme() {
+    using namespace color;
+    std::cout << cyan("主题") << "\n";
+    json cfgj = load_json(g_engine / "config" / "config.json");
+    json sitej = cfgj.contains("site") && cfgj["site"].is_object() ? cfgj["site"] : cfgj;
+    std::string themeName = sitej.value("themeName", "");
+    if (themeName.empty()) {
+        std::cout << "  当前: " << green("默认") << muted("（.Cdocs/theme，未配置 themeName）\n");
+    } else {
+        std::error_code tec;
+        bool ok = fs::is_directory(g_engine / "themes" / themeName, tec)
+                  || fs::is_directory(fs::current_path() / "themes" / themeName, tec);
+        std::cout << "  当前: " << green(themeName) << muted(ok ? "（themes/" + themeName + "）" : "（缺失，回退默认）") << "\n";
+    }
+    std::cout << "  可用:\n";
+    std::set<std::string> names;
+    for (const fs::path& td : { fs::current_path() / "themes", g_engine / "themes" }) {
+        std::error_code ec;
+        if (!fs::is_directory(td, ec)) continue;
+        for (const auto& it : fs::directory_iterator(td, ec))
+            if (it.is_directory(ec)) names.insert(it.path().filename().string());
+    }
+    if (names.empty()) {
+        std::cout << "    " << muted("（themes/ 目录无主题；仅默认 .Cdocs/theme）\n");
+    } else {
+        for (const auto& n : names) {
+            bool isCur = (n == themeName);
+            std::cout << "    " << (isCur ? green("* " + n) : muted("  " + n));
+            if (isCur) std::cout << muted("  ← 当前");
+            std::cout << "\n";
+        }
+    }
+    return 0;
+}
+
+// ============================================================
+// plugins：列出已注册插件 + 各自钩子
+// ============================================================
+int cmd_plugins() {
+    using namespace color;
+    std::cout << cyan("已注册插件") << muted("（.Cdocs/plugins/）") << "\n";
+    fs::path pd = g_engine / "plugins";
+    std::error_code ec;
+    int n = 0;
+    if (fs::is_directory(pd, ec)) {
+        for (const auto& it : fs::directory_iterator(pd, ec)) {
+            if (!it.is_directory(ec)) continue;
+            fs::path jf = it.path() / "plugin.json";
+            if (!fs::is_regular_file(jf, ec)) continue;
+            json j = load_json(jf);
+            std::string name = j.value("name", it.path().filename().string());
+            std::string desc = j.value("description", "");
+            std::vector<std::string> hooks;
+            if (j.contains("hooks") && j["hooks"].is_object())
+                for (auto& h : j["hooks"].items()) hooks.push_back(h.key());
+            std::cout << "  " << green(name);
+            if (!hooks.empty()) std::cout << muted("  [") << join(hooks, " / ") << muted("]");
+            std::cout << "\n";
+            if (!desc.empty())
+                std::cout << "      " << muted(desc) << "\n";
+            ++n;
+        }
+    }
+    if (n == 0) std::cout << "  " << muted("（无插件）\n");
+    std::cout << "  共 " << n << " 个插件\n";
+    return 0;
+}
+
+// ============================================================
+// versions：列出配置的版本（site.versions；未配置时扫描 md-* 快照约定）
+// ============================================================
+int cmd_versions() {
+    using namespace color;
+    json cfgj = load_json(g_engine / "config" / "config.json");
+    json sitej = cfgj.contains("site") && cfgj["site"].is_object() ? cfgj["site"] : cfgj;
+    std::cout << cyan("版本配置") << "\n";
+    if (!sitej.contains("versions") || !sitej["versions"].is_array() || sitej["versions"].empty()) {
+        std::cout << "  " << muted("单版本（未配置 site.versions；约定优于配置：md/ 旁的 md-* 快照目录自动识别）\n");
+        // 扫描快照目录
+        fs::path parent = g_source.parent_path();
+        if (parent.empty()) parent = fs::path(".");
+        std::string base = g_source.filename().string();
+        std::vector<std::string> snaps;
+        std::error_code ec;
+        if (fs::is_directory(parent, ec))
+            for (const auto& it : fs::directory_iterator(parent, ec)) {
+                if (!it.is_directory(ec)) continue;
+                std::string nm = it.path().filename().string();
+                if (nm.size() > base.size() + 1 && nm.compare(0, base.size(), base) == 0
+                    && nm[base.size()] == '-' && nm[0] != '.')
+                    snaps.push_back(nm);
+            }
+        if (!snaps.empty()) {
+            std::sort(snaps.begin(), snaps.end());
+            std::cout << "  " << muted("自动识别历史版本: ") << green("current") << " ";
+            for (const auto& s : snaps) std::cout << green(s.substr(base.size() + 1)) << " ";
+            std::cout << "\n";
+        }
+        return 0;
+    }
+    int n = 0;
+    for (const auto& v : sitej["versions"]) {
+        if (!v.is_object()) continue;
+        std::string name = v.value("name", "");
+        if (name.empty()) continue;
+        std::string label = v.value("label", name);
+        std::string src = v.value("source", "");
+        bool def = v.value("default", false);
+        std::cout << "  " << green(name) << muted("  label=") << label
+                  << muted("  source=") << (src.empty() ? std::string("（默认 md/）") : src)
+                  << (def ? muted("  ") + bold("[默认]") : std::string("")) << "\n";
+        ++n;
+    }
+    std::cout << "  共 " << n << " 个版本\n";
     return 0;
 }

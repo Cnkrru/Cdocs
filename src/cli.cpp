@@ -86,6 +86,9 @@ static const Command kCommands[] = {
     { "check",   "",      "",                                     "站点质量检查（死链/token/数据孔）", nullptr },
     { "config",  "",      "",                                     "打印解析后的配置摘要",      nullptr },
     { "routes",  "",      "",                                     "列出站点页面路由清单",      nullptr },
+    { "theme",   "",      "",                                     "列出可用主题 + 当前主题",   nullptr },
+    { "plugins", "",      "",                                     "列出已注册插件 + 钩子",     nullptr },
+    { "versions","",      "",                                     "列出配置的版本",            nullptr },
     { "version", "",      "",                                     "显示版本号",                nullptr },
     { "help",    "h",     "[命令]",                               "显示帮助（可指定命令）",    nullptr },
 };
@@ -143,7 +146,7 @@ static int h_new(const std::vector<std::string>& args) {
 static int h_section(const std::vector<std::string>& args) {
     auto p = parse_flags(args, 1);
     if (p.pos.empty()) {
-        std::cerr << color::error("用法: Cdocs section <blog|docs|md-v<数字>>\n");
+        std::cerr << color::error("用法: Cdocs section <blog|docs|docs-v<数字>>\n");
         return 2;
     }
     return cmd_section(p.pos[0]);
@@ -188,6 +191,21 @@ static int h_deploy(const std::vector<std::string>& args) {
 static int h_clean(const std::vector<std::string>& args) {
     (void)args;
     return cmd_clean();
+}
+
+static int h_theme(const std::vector<std::string>& args) {
+    (void)args;
+    return cmd_theme();
+}
+
+static int h_plugins(const std::vector<std::string>& args) {
+    (void)args;
+    return cmd_plugins();
+}
+
+static int h_versions(const std::vector<std::string>& args) {
+    (void)args;
+    return cmd_versions();
 }
 
 static int h_version(const std::vector<std::string>& args) {
@@ -286,6 +304,9 @@ int run_command(std::vector<std::string> args) {
     if (cmd == "check")   return cmd_check();
     if (cmd == "config")  return cmd_config();
     if (cmd == "routes")  return cmd_routes();
+    if (cmd == "theme")   return h_theme(cmdArgs);
+    if (cmd == "plugins") return h_plugins(cmdArgs);
+    if (cmd == "versions")return h_versions(cmdArgs);
     if (cmd == "version") return h_version(cmdArgs);
     if (cmd == "help")    return h_help(cmdArgs);
     return 2;  // unreachable
