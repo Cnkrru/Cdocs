@@ -46,6 +46,18 @@ def main():
         url = (site.get("url") or "").rstrip("/")
         theme_mode = site.get("theme", "dark")
         locales = list((site.get("i18n", {}).get("locales", {}) or {}).keys()) or ["zh-CN"]
+        # 版本化：页面在 <版本>/<语言>/ 下，主题 css 也随版本输出；
+        # 从 site.versions 取默认版本名拼进主题 URL（无版本化时为空）。
+        ver = ""
+        versions = site.get("versions") if isinstance(site.get("versions"), list) else []
+        if versions:
+            for v in versions:
+                if isinstance(v, dict) and v.get("default"):
+                    ver = v.get("name", "")
+                    break
+            if not ver and versions:
+                first = versions[0]
+                ver = first.get("name", "") if isinstance(first, dict) else ""
 
         inject = {}
         for loc in locales:
@@ -53,7 +65,8 @@ def main():
             custom = ""
             if url:
                 tone = "dark" if theme_mode == "dark" else "light"
-                theme = "{}/{}/assets/css/giscus-{}.css".format(url, loc, tone)
+                prefix = "{}/".format(ver) if ver else ""
+                theme = "{}/{}{}/assets/css/giscus-{}.css".format(url, prefix, loc, tone)
                 custom = ' data-custom-theme="1"'
             html = (
                 "\n<!-- giscus 评论（插件注入） -->\n"

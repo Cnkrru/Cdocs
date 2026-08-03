@@ -99,6 +99,8 @@
 }
 html {
   scroll-behavior: smooth;
+  /* overscroll 橡皮筋露出区域用主题底色兜底，避免白边（背景固定在 body 上覆盖不到 html） */
+  background-color: var(--bg);
 }
 /* 键盘焦点可见性（可访问性）：仅键盘聚焦显示焦点环，鼠标点击不显示 */
 :focus-visible {
@@ -115,7 +117,8 @@ body {
   font-family: var(--font-sans);
   color: var(--fg);
   background: var(--bg-gradient);
-  background-attachment: fixed;
+  /* 背景随内容滚动（不固定）：overscroll/橡皮筋时内容与背景不再分离，
+     避免「页面像一张纸被拖拽 + 露白边」；渐变铺满文档高度，html 底色兜底露头区域 */
   display: flex;
   flex-direction: column;
   min-height: 100vh;
