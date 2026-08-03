@@ -100,6 +100,6 @@ if [ "$NEED" -eq 1 ]; then
 fi
 
 echo "[1/1] 生成静态站点（Cdocs，内建 RSS / JSON Feed / PWA / SEO）..."
-./"$BIN"
+./"$BIN" build
 
 echo "完成。预览：python3 -m http.server 8088 --directory dist"
