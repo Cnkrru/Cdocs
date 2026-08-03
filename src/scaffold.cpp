@@ -265,18 +265,10 @@ static std::string pretty_title(const std::string& stem) {
     return t;
 }
 
-// init：在指定目录创建一个完整的新站点（对标 hugo new site）
-// 交互式询问内容区（文档/博客/两者）与是否带历史版本（md-v1/）；useDefaults 跳过（默认 文档+博客，不带版本）
-int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
-    std::error_code ec;
-    if (fs::exists(dir) && fs::is_directory(dir) && !fs::is_empty(dir, ec)) {
-        std::cerr << color::error("目标目录已存在且非空: ") << dir << "\n";
-        return 1;
-    }
+// ---- cmd_init 的职责拆分：每个子函数只做一件事，cmd_init 只做编排 ----
 
-    // ---- 交互选择内容区与版本（--defaults / 非终端时用默认） ----
-    int contentMode = 3;          // 1=仅文档  2=仅博客  3=文档+博客
-    bool withVersion = false;     // 文档带历史版本（md-v1/）
+// 交互选择内容区与版本（--defaults / 非终端时用默认）
+static void ask_content_mode(bool useDefaults, int& contentMode, bool& withVersion) {
     bool interactive = !useDefaults;
     if (interactive) {
 #ifdef _WIN32
@@ -300,17 +292,11 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
         }
         std::cout << "\n";
     }
-    bool needDocs = (contentMode != 2);   // 内容区含文档
-    bool needBlog = (contentMode != 1);   // 内容区含博客
-    fs::create_directories(dir, ec);
-    fs::create_directories(dir / "md", ec);
-    fs::create_directories(dir / "md" / "docs", ec);
-    fs::create_directories(dir / "archetypes", ec);
-    fs::create_directories(dir / ".Cdocs" / "config", ec);
-    fs::create_directories(dir / ".Cdocs" / "i18n", ec);
-    fs::create_directories(dir / ".Cdocs" / "data", ec);   // 站点自定义数据（v6）：任意 KV 文件
+}
 
-    // 复制运行所需资源（theme 主题 + deps 运行时依赖；config/i18n 会被下面写入覆盖）
+// 复制运行所需资源（theme 主题 + deps 运行时依赖；config/i18n 会被写入覆盖），返回是否找到引擎资源
+static bool copy_engine_assets(const fs::path& dir, bool copyExe) {
+    std::error_code ec;
     fs::path eng = exe_dir() / ".Cdocs";
     bool haveEngine = fs::exists(eng);
     if (haveEngine) {
@@ -326,102 +312,106 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
                 fs::copy(exe, dir / "Cdocs.exe", fs::copy_options::overwrite_existing, ec);
         }
     }
+    return haveEngine;
+}
 
-    std::string stem = dir.stem().empty() ? "md" : dir.stem().string();
+// 1) config.json（三区块：site 全局 / head 页眉 / center 内容 / footer 页脚）
+//    开箱即双语 + 全功能；所有 true/false 开关集中在对应区块顶部便于配置
+static void write_config_json(const fs::path& dir, const std::string& stem,
+                              bool needDocs, bool needBlog, bool withVersion) {
+    std::ofstream o(dir / ".Cdocs/config/config.json");
+    o << "{\n"
+      << "  \"site\": {\n"
+      << "    \"title\": \"" << esc_attr(stem) << "\",\n"
+      << "    \"description\": \"由 Cdocs 生成的静态文档站\",\n"
+      << "    \"theme\": \"dark\",\n"
+      << "    \"url\": \"\",\n"
+      << "    \"i18n\": {\n"
+      << "      \"defaultLocale\": \"zh-CN\",\n"
+      << "      \"dir\": \".Cdocs/i18n\",\n"
+      << "      \"locales\": { \"zh-CN\": { \"label\": \"简体中文\" }, \"en\": { \"label\": \"English\" } }\n"
+      << "    },\n"
+      << "    \"editLink\": { \"base\": \"\", \"docsDir\": \"md\" },\n"
+      << "    \"route\": {\n";
+    if (needDocs)
+        o << (withVersion ? "      \"docs\": \"route/docs.json\",\n"
+                          : "      \"md\": \"route/docs.json\",\n");
+    if (withVersion)
+        o << "      \"docs-v1\": \"route/docs-v1.json\",\n";
+    if (needBlog)
+        o << "      \"blog\": \"route/blog.json\"\n";
+    o << "    }";
+    if (withVersion)
+        o << ",\n    \"versions\": [\n"
+          << "      { \"name\": \"v2\", \"label\": \"2.x\", \"source\": \"md/docs\", \"default\": true },\n"
+          << "      { \"name\": \"v1\", \"label\": \"1.x\", \"source\": \"md/docs-v1\", \"default\": false }\n"
+          << "    ]";
+    o << "\n"
+      << "  },\n"
+      << "  \"head\": {\n"
+      << "    \"logo\": \"\",\n"
+      << "    \"showSearch\": true,\n"
+      << "    \"showThemeToggle\": true,\n"
+      << "    \"nav\": [\n"
+      << "      { \"title\": \"{{navHome}}\", \"file\": \"index\" }";
+    if (needDocs) o << ",\n      { \"title\": \"{{navDocs}}\", \"file\": \""
+                     << (withVersion ? "intro" : "docs/intro") << "\" }";
+    if (needBlog) o << ",\n      { \"title\": \"{{navBlog}}\", \"file\": \"blog/index\" }";
+    o << "\n    ]\n"
+      << "  },\n"
+      << "  \"center\": {\n"
+      << "    \"plugins\": [\"search\", \"dark-mode\", \"pager\", \"back-to-top\", \"toc\", \"code-highlight\"],\n"
+      << "    \"backToTop\": { \"threshold\": 300, \"label\": \"顶部\" }\n"
+      << "  },\n"
+      << "  \"footer\": {\n"
+      << "    \"text\": \"© 2026 " << esc_attr(stem) << " · 由 Cdocs 生成\"\n"
+      << "  }\n"
+      << "}\n";
+}
 
-    // 1) config.json（三区块：site 全局 / head 页眉 / center 内容 / footer 页脚）
-    //    开箱即双语 + 全功能；所有 true/false 开关集中在对应区块顶部便于配置
-    {
-        std::ofstream o(dir / ".Cdocs/config/config.json");
-        o << "{\n"
-          << "  \"site\": {\n"
-          << "    \"title\": \"" << esc_attr(stem) << "\",\n"
-          << "    \"description\": \"由 Cdocs 生成的静态文档站\",\n"
-          << "    \"theme\": \"dark\",\n"
-          << "    \"url\": \"\",\n"
-          << "    \"i18n\": {\n"
-          << "      \"defaultLocale\": \"zh-CN\",\n"
-          << "      \"dir\": \".Cdocs/i18n\",\n"
-          << "      \"locales\": { \"zh-CN\": { \"label\": \"简体中文\" }, \"en\": { \"label\": \"English\" } }\n"
-          << "    },\n"
-          << "    \"editLink\": { \"base\": \"\", \"docsDir\": \"md\" },\n"
-          << "    \"route\": {\n";
-        if (needDocs)
-            o << (withVersion ? "      \"docs\": \"route/docs.json\",\n"
-                              : "      \"md\": \"route/docs.json\",\n");
-        if (withVersion)
-            o << "      \"docs-v1\": \"route/docs-v1.json\",\n";
-        if (needBlog)
-            o << "      \"blog\": \"route/blog.json\"\n";
-        o << "    }";
-        if (withVersion)
-            o << ",\n    \"versions\": [\n"
-              << "      { \"name\": \"v2\", \"label\": \"2.x\", \"source\": \"md/docs\", \"default\": true },\n"
-              << "      { \"name\": \"v1\", \"label\": \"1.x\", \"source\": \"md/docs-v1\", \"default\": false }\n"
-              << "    ]";
-        o << "\n"
-          << "  },\n"
-          << "  \"head\": {\n"
-          << "    \"logo\": \"\",\n"
-          << "    \"showSearch\": true,\n"
-          << "    \"showThemeToggle\": true,\n"
-          << "    \"nav\": [\n"
-          << "      { \"title\": \"{{navHome}}\", \"file\": \"index\" }";
-        if (needDocs) o << ",\n      { \"title\": \"{{navDocs}}\", \"file\": \""
-                         << (withVersion ? "intro" : "docs/intro") << "\" }";
-        if (needBlog) o << ",\n      { \"title\": \"{{navBlog}}\", \"file\": \"blog/index\" }";
-        o << "\n    ]\n"
-          << "  },\n"
-          << "  \"center\": {\n"
-          << "    \"plugins\": [\"search\", \"dark-mode\", \"pager\", \"back-to-top\", \"toc\", \"code-highlight\"],\n"
-          << "    \"backToTop\": { \"threshold\": 300, \"label\": \"顶部\" }\n"
-          << "  },\n"
-          << "  \"footer\": {\n"
-          << "    \"text\": \"© 2026 " << esc_attr(stem) << " · 由 Cdocs 生成\"\n"
-          << "  }\n"
-          << "}\n";
-    }
-
-    // 2) sidebar/ 分文件侧边栏（新结构：每个版本 / 博客区一份独立 JSON，名字可自定义）
-    //    （不再生成全局 route.json——侧边栏已按版本/区域拆分，config.json 的 site.sidebar 映射接管）
-    {
-        std::error_code sec;
-        fs::create_directories(dir / ".Cdocs/config/route", sec);
-        if (needDocs) {
-            // 文档区路由：in_dir = md（单版本）或 md/docs（多版本），file 相对 in_dir 根
-            std::string dIntro = withVersion ? "intro" : "docs/intro";
-            std::string dGuide = withVersion ? "guide" : "docs/guide";
-            std::ofstream(dir / ".Cdocs/config/route/docs.json")
+// 2) route/*.json 分文件侧边栏（新结构：每个版本 / 博客区一份独立 JSON，名字可自定义）
+//    （不再生成全局 route.json——侧边栏已按版本/区域拆分，config.json 的 site.route 映射接管）
+static void write_route_files(const fs::path& dir, bool needDocs, bool needBlog, bool withVersion) {
+    std::error_code sec;
+    fs::create_directories(dir / ".Cdocs/config/route", sec);
+    if (needDocs) {
+        // 文档区路由：in_dir = md（单版本）或 md/docs（多版本），file 相对 in_dir 根
+        std::string dIntro = withVersion ? "intro" : "docs/intro";
+        std::string dGuide = withVersion ? "guide" : "docs/guide";
+        std::ofstream(dir / ".Cdocs/config/route/docs.json")
+            << "{\n  \"sidebar\": [\n"
+            << "    {\n      \"title\": \"{{navGettingStarted}}\",\n      \"items\": [\n"
+            << "        { \"title\": \"{{navIntro}}\", \"file\": \"" << dIntro << "\" },\n"
+            << "        { \"title\": \"{{navGuide}}\", \"file\": \"" << dGuide << "\" }\n"
+            << "      ]\n    }\n  ]\n}\n";
+        if (withVersion) {
+            std::ofstream(dir / ".Cdocs/config/route/docs-v1.json")
                 << "{\n  \"sidebar\": [\n"
-                << "    {\n      \"title\": \"{{navGettingStarted}}\",\n      \"items\": [\n"
-                << "        { \"title\": \"{{navIntro}}\", \"file\": \"" << dIntro << "\" },\n"
-                << "        { \"title\": \"{{navGuide}}\", \"file\": \"" << dGuide << "\" }\n"
+                << "    {\n      \"title\": \"v1 快照\",\n      \"items\": [\n"
+                << "        { \"title\": \"v1 示例\", \"file\": \"old-intro\" }\n"
                 << "      ]\n    }\n  ]\n}\n";
-            if (withVersion) {
-                std::ofstream(dir / ".Cdocs/config/route/docs-v1.json")
-                    << "{\n  \"sidebar\": [\n"
-                    << "    {\n      \"title\": \"v1 快照\",\n      \"items\": [\n"
-                    << "        { \"title\": \"v1 示例\", \"file\": \"old-intro\" }\n"
-                    << "      ]\n    }\n  ]\n}\n";
-            }
-        }
-        if (needBlog) {
-            std::ofstream(dir / ".Cdocs/config/route/blog.json")
-                << "{\n  \"sidebar\": [\n"
-                << "    {\n      \"title\": \"博客\",\n      \"items\": [\n"
-                << "        { \"title\": \"示例博文\", \"file\": \"blog/hello-cdocs\" }\n"
-                << "      ]\n    }\n  ]\n}\n";
-            // 博客数据查询必须走插件：同步生成内置查询插件（blog-query/tags-query）
-            write_query_plugins(dir);
         }
     }
+    if (needBlog) {
+        std::ofstream(dir / ".Cdocs/config/route/blog.json")
+            << "{\n  \"sidebar\": [\n"
+            << "    {\n      \"title\": \"博客\",\n      \"items\": [\n"
+            << "        { \"title\": \"示例博文\", \"file\": \"blog/hello-cdocs\" }\n"
+            << "      ]\n    }\n  ]\n}\n";
+        // 博客数据查询必须走插件：同步生成内置查询插件（blog-query/tags-query）
+        write_query_plugins(dir);
+    }
+}
 
-    // 3) i18n 字典（双语完整，确保可构建）
+// 3) i18n 字典（双语完整，确保可构建）
+static void write_i18n_files(const fs::path& dir) {
     std::ofstream(dir / ".Cdocs/i18n/zh-CN.json") << kZhCN;
     std::ofstream(dir / ".Cdocs/i18n/en.json")   << kEn;
+}
 
-    // 3.5) 站点自定义数据示例（v6：.Cdocs/data/*.json 任意 KV，合并进页面数据作用域——
-    //     组件数据孔 {{products.0.name}} 等命中即取；没 kv 就算了，走内置数据层）
+// 3.5) 站点自定义数据示例（v6：.Cdocs/data/*.json 任意 KV，合并进页面数据作用域——
+//     组件数据孔 {{products.0.name}} 等命中即取；没 kv 就算了，走内置数据层）
+static void write_data_files(const fs::path& dir) {
     std::ofstream(dir / ".Cdocs/data/site.json")
         << "{\n"
         << "  \"site_author\": \"Cdocs 团队\",\n"
@@ -430,8 +420,10 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
         << "    { \"name\": \"Cdocs 主题包\", \"price\": \"开源\" }\n"
         << "  ]\n"
         << "}\n";
+}
 
-    // 4) 页面地图注册表（v2：C++ 构建时读此配置了解有哪些站点地图；地图本体在 theme/map/，JSON 约定）
+// 4) 页面地图注册表（v2：C++ 构建时读此配置了解有哪些站点地图；地图本体在 theme/map/，JSON 约定）
+static void write_map_registry(const fs::path& dir) {
     std::ofstream(dir / ".Cdocs/config/map.json")
         << "{\n"
         << "  \"maps\": [\n"
@@ -447,8 +439,11 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
         << "    \"base\": \"map/base.json\"\n"
         << "  }\n"
         << "}\n";
+}
 
-    // 4) 示例内容（按交互选择：文档 / 博客 / 版本）
+// 4) 示例内容（按交互选择：文档 / 博客 / 版本）
+static void write_sample_content(const fs::path& dir, bool needDocs, bool withVersion, bool needBlog) {
+    std::error_code ec;
     if (needDocs) {
     std::ofstream(dir / "md/docs/intro.md") <<
         "# 欢迎使用 Cdocs\n\n"
@@ -549,9 +544,10 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
         std::ofstream(dir / "md/blog/hello-cdocs.en.md") <<
             "---\ntitle: Hello, Cdocs\ndate: 2026-01-01\ntags: [cdocs]\n---\n\n# Hello, Cdocs\n\nThis is the first sample post. Write blog posts under `md/blog/`.\n";
     }
+}
 
-    // 5) 页面原型（archetype）：add 命令会读取并把 {{title}}/{{date}}/{{slug}} 替换
-    //    原型自带 front matter 示例，使 add 生成的文档天生可用元数据（title/date/tags）
+// 5) 页面原型（archetype）+ 6) 预览启动器：add 命令会读取原型并把 {{title}}/{{date}}/{{slug}} 替换
+static void write_support_files(const fs::path& dir) {
     std::ofstream(dir / "archetypes/default.md") <<
         "---\n"
         "title: \"{{title}}\"\n"
@@ -561,7 +557,6 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
         "# {{title}}\n\n"
         "在这里开始写作…\n";
 
-    // 6) 预览启动器
     std::ofstream(dir / "serve.bat") <<
         "@echo off\n"
         "chcp 65001 >nul 2>&1\n"
@@ -569,18 +564,57 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
         "echo 正在启动 Cdocs 预览服务器... （按 Ctrl+C 停止）\n"
         "Cdocs.exe serve %*\n"
         "if errorlevel 1 pause\n";
+}
 
-    // 7) 自动构建：建完框架立即生成 dist/，让 style.css / app.js 等资源直接就位、开箱即看
-    bool built = false;
-    if (haveEngine) {
-        fs::path saved = fs::current_path(ec);
-        fs::current_path(dir, ec);
-        if (!ec) {
-            int rc = run_build(fs::path("md"), fs::path("dist"), false, false);
-            built = (rc == 0);
-            fs::current_path(saved, ec);
-        }
+// 7) 自动构建：建完框架立即生成 dist/，让 style.css / app.js 等资源直接就位、开箱即看
+static bool build_after_init(const fs::path& dir) {
+    std::error_code ec;
+    fs::path saved = fs::current_path(ec);
+    fs::current_path(dir, ec);
+    if (ec) return false;
+    int rc = run_build(fs::path("md"), fs::path("dist"), false, false);
+    fs::current_path(saved, ec);
+    return (rc == 0);
+}
+
+// init：在指定目录创建一个完整的新站点（对标 hugo new site）
+// 交互式询问内容区（文档/博客/两者）与是否带历史版本（md-v1/）；useDefaults 跳过（默认 文档+博客，不带版本）
+int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
+    std::error_code ec;
+    if (fs::exists(dir) && fs::is_directory(dir) && !fs::is_empty(dir, ec)) {
+        std::cerr << color::error("目标目录已存在且非空: ") << dir << "\n";
+        return 1;
     }
+
+    // ---- 交互选择内容区与版本（--defaults / 非终端时用默认） ----
+    int contentMode = 3;          // 1=仅文档  2=仅博客  3=文档+博客
+    bool withVersion = false;     // 文档带历史版本（md-v1/）
+    ask_content_mode(useDefaults, contentMode, withVersion);
+    bool needDocs = (contentMode != 2);   // 内容区含文档
+    bool needBlog = (contentMode != 1);   // 内容区含博客
+    fs::create_directories(dir, ec);
+    fs::create_directories(dir / "md", ec);
+    fs::create_directories(dir / "md" / "docs", ec);
+    fs::create_directories(dir / "archetypes", ec);
+    fs::create_directories(dir / ".Cdocs" / "config", ec);
+    fs::create_directories(dir / ".Cdocs" / "i18n", ec);
+    fs::create_directories(dir / ".Cdocs" / "data", ec);   // 站点自定义数据（v6）：任意 KV 文件
+
+    // 复制运行所需资源（theme 主题 + deps 运行时依赖；config/i18n 会被下面写入覆盖）
+    bool haveEngine = copy_engine_assets(dir, copyExe);
+    std::string stem = dir.stem().empty() ? "md" : dir.stem().string();
+
+    // 按职责逐块生成骨架文件（1)~6) 见上方子函数定义）
+    write_config_json(dir, stem, needDocs, needBlog, withVersion);
+    write_route_files(dir, needDocs, needBlog, withVersion);
+    write_i18n_files(dir);
+    write_data_files(dir);
+    write_map_registry(dir);
+    write_sample_content(dir, needDocs, withVersion, needBlog);
+    write_support_files(dir);
+
+    // 7) 自动构建：让 style.css / app.js 等资源直接就位、开箱即看
+    bool built = haveEngine && build_after_init(dir);
 
     std::cout << color::green("已创建新站点: ") << dir << "\n";
     if (copyExe && haveEngine)
