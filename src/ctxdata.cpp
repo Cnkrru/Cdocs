@@ -88,14 +88,21 @@ json cards_json(const SiteConfig& cfg, const std::vector<Page>& pages) {    std:
             if (f.rfind("docs/", 0) == 0) return f.substr(5);   // docs/xxx → xxx
             return f;
         };
+        // 历史版本（非默认，如 v1 快照）内容不完整是常态，卡片缺失不提示；
+        // 仅默认版本 / 非版本化站点保留提示（配置写错路径的诊断价值）。
+        bool defVer = true;
+        if (!cfg.versions.empty())
+            for (const auto& v : cfg.versions)
+                if (v.name == cfg.curVersion) { defVer = v.default_v; break; }
         for (const auto& hc : cfg.homeCards) {
             const Page* found = nullptr;
             std::string hf = norm(hc.file);
             for (const auto& p : pages)
                 if (!p.draft && (p.file == hc.file || p.file == hf)) { found = &p; break; }
             if (!found) {
-                std::cerr << color::warn("提示: ") << "home.cards 引用了不存在的页面: "
-                          << hc.file << "（已跳过）\n";
+                if (defVer)
+                    std::cerr << color::warn("提示: ") << "home.cards 引用了不存在的页面: "
+                              << hc.file << "（已跳过）\n";
                 continue;
             }
             shown.push_back(found);

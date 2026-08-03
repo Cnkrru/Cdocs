@@ -3,9 +3,10 @@ dist/
 web/dist/
 .build/
 
-# 生成器二进制（源码构建即可）
+# 生成器二进制（源码构建即可；bin/ 分发包的 exe 随仓库分发，保留）
 Cdocs.exe
 Cdocs
+!bin/Cdocs.exe
 
 # 分发包（web/.Cdocs/tools/make_release.py 可重建；bin/ 随仓库分发，不入忽略）
 release/
