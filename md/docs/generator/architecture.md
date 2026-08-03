@@ -1,15 +1,17 @@
 # 架构一览
 
-Cdocs 的核心设计是**数据驱动 + 引擎收口**：所有"引擎"相关文件统一收口在隐藏目录 `.Cdocs/` 内，用户侧只维护 `docs/`（内容）与 `dist/`（产物）。
+Cdocs 的核心设计是**数据驱动 + 引擎收口**：所有"引擎"相关文件统一收口在隐藏目录 `.Cdocs/` 内，用户侧只维护 `md/`（内容）与 `dist/`（产物）。
 
 ## 整体数据流
 
 ```mermaid
 flowchart LR
   C["config.json"] --> G["Cdocs.exe"]
-  R["route.json"] --> G
+  R["route/*.json"] --> G
   L["i18n 字典"] --> G
-  D["md/docs/*.md"] --> G
+  D["md/docs + md/blog *.md"] --> G
+  T["themes/<name>/ 主题"] --> G
+  P["plugins/*/ 插件脚本"] <--> G
   A["assets/ 前端"] --> G
   G --> DIST["dist/ 纯静态（HTML · SEO · RSS · PWA · search.json）"]
 ```
@@ -47,7 +49,7 @@ flowchart LR
 | 编排 | `cli` | 命令注册表分发 / 统一 flag 解析 / 帮助 / 退出码 |
 | 诊断 | `diag` | `doctor` / `check` / `config` / `routes` / `theme` / `plugins` / `versions` 诊断命令 |
 
-> 演进：早期把渲染部件与脚手架命令都堆在 `builder.cpp`（一度 3200 行）；v2 拆出 `component` / `shortcode` / `scaffold` / `diag`；v3 再拆 `versions` / `output`，并把 `render_locales` 的单语言渲染循环体提取为 `render_one_locale`；v4 三拆 `ctxdata`（数据装配）/ `site_config`（配置加载）/ `render_pages`（页面类型渲染），`render_one_locale` 从 652 行瘦到编排（113 行），`builder.cpp` 1734 → 708 行，只留收集 + 地图渲染 + 编排。
+> 演进：早期把渲染部件与脚手架命令都堆在 `builder.cpp`（一度 3200 行）；v2 拆出 `component` / `shortcode` / `scaffold` / `diag`；v3 再拆 `versions` / `output`，并把 `render_locales` 的单语言渲染循环体提取为 `render_one_locale`；v4 三拆 `ctxdata`（数据装配）/ `site_config`（配置加载）/ `render_pages`（页面类型渲染），`render_one_locale` 从 652 行瘦到编排（113 行），`builder.cpp` 1734 → 708 行；v5 拆分剩余巨型函数（`scaffold.cmd_init` 330→52 行、`site_config.parse_site_block` 245→38 行），**全项目无超 150 行函数**。
 
 ## run_build：纯编排
 
@@ -74,10 +76,12 @@ flowchart LR
 ## 构建链：两步，零依赖
 
 ```text
-build.cmd → ① 编译 20 个 C++ 源（g++ -std=c++17）+ 3 个 vendor C 源（md4c，用 gcc）
+build.cmd → ① 编译 25 个 C++ 源（g++ -std=c++17）+ 3 个 vendor C 源（md4c，用 gcc）
            → ② Cdocs.exe build 生成完整 dist/（RSS / Feed / PWA / SEO 全内建）
 ```
 
 编译要点：md4c 是 C 源必须用 `gcc`；链接必须 `-static -static-libgcc -static-libstdc++`（自带运行时）；Windows 加 `-lws2_32`（serve 用 winsock）。
+
+发布：`.Cdocs/tools/make_release.py` 生成 `release/`（exe + 引擎资源，排除编译中间产物），加入 PATH 即可全局使用。
 
 详细说明见项目根 `ARCHITECTURE.md`。

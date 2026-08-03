@@ -53,4 +53,4 @@ Component files may embed `<style>` blocks (componentized styles). When the same
 | `src/markdown.cpp` | md4c wrapper + `render_admonitions` |
 | `src/shortcode.cpp` | pre-scan / expand / dedup / escape (public surface: `render_doc_body`) |
 | `src/component.cpp` | component loading, data-hole filling, site data (`{{key}}` / `{{slot}}`) |
-| `.Cdocs/theme/components/shortcodes/*.html` | built-in shortcode component files |
+| `themes/<name>/components/shortcodes/*.html` | built-in shortcode component files |

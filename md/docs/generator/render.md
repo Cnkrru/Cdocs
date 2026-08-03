@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-  MD["docs/*.md 正文"] --> P1["shortcode 预扫描<br/>（<组件/> → 占位 token）"]
+  MD["md/docs/*.md 正文"] --> P1["shortcode 预扫描<br/>（<组件/> → 占位 token）"]
   P1 --> P2["md4c 渲染<br/>（Markdown → HTML）"]
   P2 --> P3["Admonitions 展开<br/>（&gt; [!type] → 提示卡片）"]
   P3 --> P4["shortcode 展开<br/>（token → 组件渲染结果）"]
@@ -53,4 +53,4 @@ flowchart LR
 | `src/markdown.cpp` | md4c 封装 + `render_admonitions` |
 | `src/shortcode.cpp` | 预扫描 / 展开 / 去重 / 转义（对外仅 `render_doc_body`） |
 | `src/component.cpp` | 组件加载、数据孔填充、站点数据（`{{key}}` / `{{slot}}`） |
-| `.Cdocs/theme/components/shortcodes/*.html` | 内置 shortcode 组件文件 |
+| `themes/<name>/components/shortcodes/*.html` | 内置 shortcode 组件文件 |

@@ -35,9 +35,10 @@ def copy_tree(src, dst, base_rel):
             shutil.copy2(s, os.path.join(dst, name))
 
 def main():
-    if os.path.exists(REL):
-        shutil.rmtree(REL)
-    os.makedirs(REL)
+    # 覆盖合并模式：不整目录删除（避免 safe-delete 回收站不可用时中断），
+    # 逐文件 copy2 覆盖，目录 makedirs(exist_ok) 合并。排除项本就该不存在，
+    # 若历史残留（如旧 .build），额外尝试清理（失败不影响发布包正确性）。
+    os.makedirs(REL, exist_ok=True)
 
     # 1) Cdocs.exe
     exe = os.path.join(ROOT, "Cdocs.exe")
@@ -49,6 +50,18 @@ def main():
     # 2) .Cdocs 引擎资源
     os.makedirs(os.path.join(REL, ".Cdocs"), exist_ok=True)
     copy_tree(SRC, os.path.join(REL, ".Cdocs"), "")
+
+    # 3) 尽力清理历史排除残留（存在才删；被安全钩子拦则跳过）
+    for rel in list(EXCLUDE_REL) + list(EXCLUDE_DIRS):
+        p = os.path.join(REL, ".Cdocs", rel)
+        if os.path.exists(p):
+            try:
+                if os.path.isdir(p):
+                    shutil.rmtree(p)
+                else:
+                    os.remove(p)
+            except OSError:
+                print(f"  （跳过清理 {rel}：被安全钩子拦截）")
 
     # 统计发布包体积
     total = 0

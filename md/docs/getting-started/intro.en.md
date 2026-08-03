@@ -15,31 +15,33 @@ Traditional doc tools either require a Node/Python runtime or scatter their conf
 
 ## Core features
 
-- **CLI**: `init` / `new` / `section` / `build` / `serve` / `deploy` / `clean` + diagnostics `doctor` / `check` / `config` / `routes`
-- **Content**: Markdown (md4c based, with GFM extensions: tables, task lists, strikethrough)
-- **Navigation**: config-driven sidebar, up to 6 nesting levels, collapsible groups, mobile drawer
+- **CLI**: `init` / `new` / `section` / `build` / `serve` / `deploy` / `clean` + diagnostics `doctor` / `check` / `config` / `routes` / `theme` / `plugins` / `versions`
+- **Content**: Markdown (md4c based, with GFM extensions: tables, task lists, strikethrough); single `md/` root (docs + docs-v<v> versions + blog)
+- **Navigation**: config-driven per-area sidebar files (`route/`), up to 6 nesting levels, collapsible groups, mobile drawer
 - **Search**: client-side full-text search (FlexSearch) with title/body fields and hit highlighting
-- **Theme**: light/dark dual theme, follows system on first visit, remembers preference
+- **Themes**: multi-theme repository (`themes/`: ink / paper / frost), light/dark dual theme, one-click skinning via `themeName`
 - **Enhancements**: code highlighting / copy button, Admonitions, `Mermaid` diagrams, KaTeX math
+- **Shortcodes**: `<Tabs/>` `<Expand/>` `<CodeGroup/>` `<Badge/>` inline components (self-contained styles)
 - **Experience**: ⌘K command palette, image lightbox, print / export PDF, "was this page helpful?" feedback
 - **i18n**: `{{key}}` + flat JSON dictionaries
+- **Versioning**: multi-version docs (`site.versions` explicit + snapshot convention), switcher keeps locale
+- **Plugins**: data queries (blog feed / tag aggregation) 100% via Python plugins; `on_config` / `on_data_query` / `on_page_rendered` / `on_done` / `setup` hooks
 - **Publishing**: per-page SEO, sitemap, robots, RSS 2.0 / JSON Feed, PWA offline
 
 ## Three steps to get started
 
 ```bash
-# 1) One-shot build (auto-compile generator -> generate site -> RSS -> PWA)
-.Cdocs\tools\build.cmd          # Windows
-bash .Cdocs/tools/build.sh      # Linux / macOS
+# Option A: global install (add release/ package to PATH)
+Cdocs init mysite         # scaffold site (copies engine + auto-builds, ready to view)
+cd mysite
+Cdocs serve               # local preview (built-in C++ server, default http://localhost:8088)
 
-# 2) Local preview (built-in C++ static server, default http://localhost:8088)
-Cdocs serve
-
-# 3) Scaffold a standalone site (copies engine + Cdocs.exe + sample md/docs/intro.md)
-Cdocs new my-docs
+# Option B: build from source
+.Cdocs\tools\build.cmd    # Windows one-shot build (compile -> generate -> RSS -> PWA)
+bash .Cdocs/tools/build.sh  # Linux / macOS
 ```
 
-> Tip: `serve` ships a C++ HTTP server, so **no Python or Node install is required**; it only listens on `127.0.0.1`. Re-run after editing `md/docs/` to refresh the preview.
+> Tip: `serve` ships a C++ HTTP server, so **no Python or Node install is required**; it only listens on `127.0.0.1`. Re-run after editing `md/` to refresh the preview.
 
 ## Where to go next
 

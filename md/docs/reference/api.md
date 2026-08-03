@@ -4,8 +4,8 @@ Cdocs 是一个**命令行驱动的静态文档站生成器**，不对外暴露 
 
 | 层面 | 位置 | 说明 |
 | --- | --- | --- |
-| 配置 | `.Cdocs/config/config.json` + `sidebar/`（分文件侧边栏） | 站点元数据、功能开关、导航（老站点 route.json 自动兼容） |
-| 主题 | `.Cdocs/theme/` | 页面骨架（layout.html）+ 前端资源（assets/），换主题 = 换文件夹 |
+| 配置 | `.Cdocs/config/config.json` + `route/`（分文件侧边栏） | 站点元数据、功能开关、导航（老站点 route.json 自动兼容） |
+| 主题 | `themes/<name>/` | 页面骨架（map/*.json）+ 组件（components/）+ 前端资源（assets/），换主题 = 换文件夹 + 改 `themeName` |
 | 插件 | `.Cdocs/plugins/<name>/plugin.json` | 外部脚本挂接构建生命周期钩子 |
 
 本文档依次覆盖：**命令**、**配置**、**主题**、**插件**、**内容 front matter**、**多语言**、**版本化**、**博客流**、**导航**、**增量构建**。
@@ -16,7 +16,7 @@ Cdocs 是一个**命令行驱动的静态文档站生成器**，不对外暴露 
 
 | 命令 | 说明 | 常用旗标 |
 | --- | --- | --- |
-| `Cdocs init <目录>` | 新建完整站点骨架（config/sidebar/i18n/示例文档/主题资源）并自动构建 | `--no-engine` 仅内容骨架；`--defaults`/`-y` 跳过交互 |
+| `Cdocs init <目录>` | 新建完整站点骨架（config/route/i18n/示例文档/主题资源）并自动构建 | `--no-engine` 仅内容骨架；`--defaults`/`-y` 跳过交互 |
 | `Cdocs new <页面名>` | 新建内容页（从 `archetypes/default.md`）并登记导航（别名 `add`/`page`） | — |
 | `Cdocs section <blog\|docs\|md-v<n>>` | 添加内容区（分类），blog/docs 唯一、版本可多个 | — |
 | `Cdocs build [源] [目标]` | 构建站点，默认 `md` → `dist` | `-D/--drafts` 含草稿、`--clean` 构建前清空 |
@@ -25,7 +25,10 @@ Cdocs 是一个**命令行驱动的静态文档站生成器**，不对外暴露 
 | `Cdocs doctor` | 环境与配置自检（config/内容区/主题/工具探测） | — |
 | `Cdocs check` | 站点质量检查：死链 + 组件 token 残留 + 未渲染数据孔 | — |
 | `Cdocs config` | 打印解析后的配置摘要（诊断用） | — |
-| `Cdocs routes` | 列出 sidebar 登记的页面路由清单 | — |
+| `Cdocs routes` | 列出 route 登记的页面路由清单 | — |
+| `Cdocs theme` | 列出可用主题（themes/）+ 当前生效主题 | — |
+| `Cdocs plugins` | 列出已注册插件（.Cdocs/plugins/）+ 各自钩子 | — |
+| `Cdocs versions` | 列出配置的版本（site.versions；未配置时扫描快照约定） | — |
 | `Cdocs clean` | 清空输出目录（对标 `jekyll clean`） | — |
 | `Cdocs version` / `-v` | 显示版本号 | — |
 | `Cdocs help [命令]` / `-h` | 显示帮助（可指定命令查看子帮助） | — |
@@ -80,7 +83,7 @@ Cdocs deploy --setup
 | 旗标 | 说明 |
 | --- | --- |
 | `-c, --config <目录>` | 引擎/配置根目录（默认 `.Cdocs`） |
-| `-s, --source <目录>` | Markdown 源目录（默认 `docs`） |
+| `-s, --source <目录>` | Markdown 源目录（默认 `md`） |
 | `-d, --dest <目录>` | 输出目录（默认 `dist`） |
 | `-q, --quiet` / `-V, --verbose` | 静默 / 详细输出 |
 
@@ -98,6 +101,7 @@ Cdocs deploy --setup
     "title": "{{siteTitle}}",
     "description": "{{siteDesc}}",
     "theme": "dark",
+    "themeName": "ink",
     "url": "https://docs.example.com",
     "ogImage": "/icon.svg",
     "i18n": {
@@ -107,9 +111,13 @@ Cdocs deploy --setup
     },
     "editLink": { "base": "https://github.com/me/docs/edit/main", "docsDir": "md" },
     "themeVars": { "--radius": "12px", "--sidebar-left-w": "248px" },
-    "customCss": ".Cdocs/theme/assets/css/custom.css",
+    "customCss": "themes/ink/assets/css/custom.css",
     "compress": true,
     "jpegQuality": 82,
+    "route": {
+      "docs": "route/docs.json",
+      "blog": "route/blog.json"
+    },
     "deploy": { "remote": "", "branch": "gh-pages", "message": "" }
   },
   "head": {
@@ -146,6 +154,7 @@ Cdocs deploy --setup
 | --- | --- | --- |
 | `title` / `description` | string | 站点标题/描述，支持 `{{key}}` 走 i18n |
 | `theme` | `light`/`dark` | 默认主题色 |
+| `themeName` | string | 生效主题名（`themes/` 下子目录；缺省 = `ink`） |
 | `url` | string | 站点真实域名（canonical / sitemap / RSS / deploy 远端推断的依据） |
 | `ogImage` | string | 社交分享封面图（og:image / twitter:image） |
 | `i18n` | object | 多语言：`defaultLocale` 默认语言、`dir` 字典目录、`locales` 各语言 `label` |
@@ -156,6 +165,8 @@ Cdocs deploy --setup
 | `jpegQuality` | int | JPEG 重压质量（1-100），默认 `82` |
 | `deploy` | object | `Cdocs deploy` 默认值：`remote`/`branch`/`message`（均可被 CLI 旗标覆盖） |
 | `home` | object | 首页：`hero`（title/subtitle/cta）与 `cards` 白名单（`file`/`title`/`desc`），空 cards = 自动列出全部页面 |
+| `route` | object | 路由映射：key=版本源目录名或 `blog`，value=相对 `.Cdocs/config/` 的 JSON 路径（见第 9 节） |
+| `versions` | array | 版本化：`[{name, label, source, default}]`，`source` 为该版本源目录（见第 7 节） |
 
 ### head（页眉）
 
@@ -187,10 +198,10 @@ Cdocs deploy --setup
 
 ## 3. 主题 API
 
-一个主题 = 一个文件夹 `.Cdocs/theme/`，**换主题 = 替换整个文件夹**（完整规范见 [主题开发](./themes)）。
+主题 = `themes/<name>/` 一个文件夹，**换主题 = 换文件夹 + 改 `site.themeName`**（完整规范见 [主题开发](./themes)）。
 
 ```
-.Cdocs/theme/
+themes/ink/
 ├── theme.json          主题元数据（name/version/description…）
 ├── map/                页面地图 JSON（每个页面类型一个，extends 继承）
 ├── components/         组件（结构+样式+交互 内嵌自包含，含 shortcodes/）
@@ -201,6 +212,7 @@ Cdocs deploy --setup
 - 组件用 `{{key}}` 数据孔接收引擎数据：`{{header}}` / `{{body}}` / `{{slot}}` / `{{a.b.c}}` 等（全表见主题文档）；
 - **样式组件化**：组件文件内嵌 `<style>`（结构+样式+交互三位一体），复制组件文件即带走全套样式；含 `url()` 的图标规则与主题变量留在 `style.css`；
 - `assets/` 原样复制到 `dist/<loc>/assets/`；构建产物额外生成 `assets/deps/`（运行时依赖）与 `assets/search.json`（搜索索引）；
+- 地图注册在 `.Cdocs/config/map.json`（`maps` 数组 + `templates.base`）；
 - `config.site.themeVars` 覆盖主题公开的 CSS 变量；`config.site.customCss` 追加自定义样式。
 
 ---
@@ -227,7 +239,7 @@ Cdocs deploy --setup
 
 ## 5. 内容 front matter
 
-`docs/` 下的 Markdown 文件可选 YAML front matter（`---` 包裹）：
+`md/docs/` 下的 Markdown 文件可选 YAML front matter（`---` 包裹）：
 
 ```markdown
 ---
@@ -258,41 +270,43 @@ aliases: [old-path]      # 旧路径，自动生成重定向页
 
 Docusaurus 风格多版本：**显式配置优先，约定优于配置**。
 
-- **显式**：`config.json` 的 `site.versions` 声明版本列表、label、源目录与默认版本。
-- **约定**：`docs-*` 目录自动识别为历史版本（如 `docs-v1`），当前版本 = `docs`。每个版本独立构建产物，根目录重定向到当前版本，页头版本下拉切换。
+- **显式**：`config.json` 的 `site.versions` 声明版本列表（`name`/`label`/`source`/`default`，`source` 指定该版本源目录），根目录重定向到 `default` 版本，页头版本下拉切换。内容架构：`md/` 唯一根，版本 = `md/docs`（当前）+ `md/docs-<v>`（快照）。
+- **约定**：未配置时自动扫描 `md` 的同级 `<md>-*` 快照目录（如 `md-v1`），识别为历史版本。每个版本独立构建产物。
 
 ---
 
 ## 8. 博客流
 
-`docs/blog/` 目录约定启用（类似 Hugo 的 `content/blog`）：
+`md/blog/` 目录约定启用（类似 Hugo 的 `content/blog`）：
 
-- `docs/blog/xxx.md`（+ `xxx.en.md`）→ 博客列表 + 详情页，日期倒序，分页（10 篇/页）。
+- `md/blog/xxx.md`（+ `xxx.en.md`）→ 博客列表 + 详情页，日期倒序，分页（10 篇/页）。
 - 详情页含日期、阅读时长、上下篇导航。
 - 博客文章并入 RSS / JSON Feed、搜索索引与标签聚合。
 - front matter `date` 决定排序；`draft: true` 默认不发布。
+- **查询逻辑 100% 插件化**：博客流排序/分页/首页文章流由 `blog-query` 插件（Python）在 `on_data_query` 钩子实现，改脚本即可自定义（每页条数、排序、首页条数）。
 
 ---
 
 ## 9. 导航（侧边栏）
 
-侧边栏支持**按版本 / 区域分文件配置**（推荐）：`.Cdocs/config/sidebar/` 下放多份 JSON（文件名自定义），
-在 `config.json` 的 `site.sidebar` 用**文件路径映射**声明"哪个 JSON 对应哪个文件夹"：
+侧边栏支持**按版本 / 区域分文件配置**（推荐）：`.Cdocs/config/route/` 下放多份 JSON（文件名自定义），
+在 `config.json` 的 `site.route` 用**文件路径映射**声明"哪个 JSON 对应哪个文件夹"：
 
 ```json
 "site": {
-  "sidebar": {
-    "docs":    "sidebar/docs.json",   // 当前版本文档（源目录 docs）
-    "docs-v1": "sidebar/v1.json",     // 历史版本（源目录 docs-v1）
-    "blog":    "sidebar/blog.json"    // 博客区
+  "route": {
+    "docs":    "route/docs.json",   // 当前版本文档（源目录 md/docs）
+    "docs-v1": "route/docs-v1.json",// 历史版本（源目录 md/docs-v1）
+    "blog":    "route/blog.json"    // 博客区
   }
 }
 ```
 
-- key = 版本源目录名（`docs`、`docs-v1`...，自动识别）或 `blog`；value = 相对 `.Cdocs/config/` 的 JSON 路径。
+- key = 版本源目录名（`docs`、`docs-v1`...，与 `site.versions[].source` 对应）或 `blog`；value = 相对 `.Cdocs/config/` 的 JSON 路径。
 - 每个版本独立构建时加载自己那份侧边栏；博客页（列表/详情）加载 `blog` 那份。
-- `init` 生成的新站点默认带 `sidebar/docs.json` + `sidebar/blog.json` 与映射；`Cdocs add` 自动登记到 `sidebar/docs.json`。
+- `init` 生成的新站点默认带 `route/docs.json` + `route/blog.json` 与映射；`Cdocs add` 自动登记到 `route/docs.json`。
 - 未配置映射或文件缺失 → 回退全局 `.Cdocs/config/route.json`（老站点零回归）。
+- 兼容旧字段名 `site.sidebar`（自动识别）。
 
 JSON 文件格式（`sidebar` 数组，最多 6 层嵌套）：
 
@@ -312,7 +326,7 @@ JSON 文件格式（`sidebar` 数组，最多 6 层嵌套）：
 ```
 
 - `title`：分组或条目标题，支持 `{{key}}`。
-- `file`：对应 `docs/<file>.md`，生成 `dist/<loc>/<file>.html`。
+- `file`：对应 `md/<file>.md`（相对源目录根，如 `docs/intro`），生成 `dist/<loc>/<file>.html`。
 - `url`：外链（与 `file` 二选一）。
 - `items`：下一层导航。
 - 博客区侧边栏的 `file` 写 `blog/xxx`（指向博客文章页）。
@@ -324,3 +338,4 @@ JSON 文件格式（`sidebar` 数组，最多 6 层嵌套）：
 - **增量**：`serve -w` 下按指纹跳过未变页面。全局签名（config/route/i18n/theme 的 mtime 峰值，存 `.Cdocs/.build/.sig`）+ 页面指纹（`mtime:size`，存 `.pages.sig`）+ 资源签名（`.assets.sig`）三层判定。
 - **自动刷新**：构建完成会更新 `/__cdocs_epoch` 端点，浏览器轮询后整页 reload，改文件即所见即所得。
 - **新建站点**：`Cdocs init <目录>` 一次生成完整骨架（含主题资源与 `Cdocs.exe`），开箱即构建。
+- **全局安装**：把 `Cdocs.exe` + `.Cdocs/` 放进同一目录（如 `release/`），将该目录加入 PATH，即可在任何目录直接运行 `Cdocs init/build/serve`（详见 [使用指南](../getting-started/guide)）。

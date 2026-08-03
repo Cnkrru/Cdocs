@@ -18,6 +18,9 @@ Cdocs 的功能分两类：**构建期内建**（生成器 C++ 直接产出）�
 | 短代码组件 | 正文 HTML | `<Tabs/>` `<Expand/>` `<CodeGroup/>` `<Badge/>` 等（标签语法，见 [shortcode 参考](../reference/shortcodes)） |
 | 草稿 | — | `draft: true` 默认排除，`build -D` 包含 |
 | 多语言 | `dist/<loc>/` | 每语言独立目录，根页面自动重定向默认语言 |
+| 多版本 | `dist/v2/` + `dist/v1/` | `site.versions` 显式声明 + 快照约定，版本下拉切换（见 [版本化](./versioning)） |
+| 多主题 | `themes/<name>/` | `themeName` 一键换肤（ink / paper / frost），主题 = map + components + assets（见 [主题开发](../reference/themes)） |
+| 查询插件化 | — | 博客流排序/分页、标签聚合由 Python 插件在 `on_data_query` 钩子实现，引擎零硬编码查询（见 [插件开发](../reference/plugins)） |
 
 ## 客户端增强（features/）
 

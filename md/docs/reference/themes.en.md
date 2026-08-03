@@ -4,10 +4,25 @@ A Cdocs **theme is a folder**. The engine produces data (nav tree, TOC, body, pa
 
 ## Directory layout
 
-The theme lives under the engine dir: `.Cdocs/theme/` — shipped with the built-in "ink" theme:
+Themes live in the **multi-theme repository** `themes/` (at the engine root), shipped with 3 built-ins:
 
 ```
-.Cdocs/theme/
+themes/
+├── ink/       # ink-wash style (default): rice-paper white + cinnabar red + night ink
+├── paper/     # paper style: narrow reading column, light default, top nav, card home
+└── frost/     # glassmorphism: frosted cards, gradient background, sticky header
+```
+
+The active theme is set by `site.themeName` in `config.json` (defaults to `ink`):
+
+```json
+"site": { "themeName": "frost", "theme": "dark" }
+```
+
+Each theme is a self-contained folder `themes/<name>/`:
+
+```
+themes/ink/
 ├── theme.json                 # theme metadata (name/version/description…)
 ├── map/                       # page maps: one JSON per page type (core!)
 │   ├── home.json              #   home page
@@ -27,6 +42,8 @@ The theme lives under the engine dir: `.Cdocs/theme/` — shipped with the built
     ├── pwa/                   #   sw.js + icon.svg (PWA offline)
     └── icons/                 #   inline SVG icons
 ```
+
+> Mechanical components (theme-independent interactive widgets like search/lightbox) fall back to the **default theme** when missing in the active theme — skinning doesn't require copying the whole component set.
 
 ## theme.json — metadata
 
@@ -100,10 +117,11 @@ A component is one HTML file that may embed `<style>` and `<script>`, fully self
 
 ## How to make a new theme
 
-1. Copy `.Cdocs/theme/` to `.Cdocs/theme-my/`;
+1. Copy `themes/ink/` to `themes/my-theme/`;
 2. Edit `theme.json` (name/version/description);
-3. Edit `map/*.json` to reshape page structure (component composition);
-4. Edit `components/` and `assets/css/style.css` for visuals;
-5. `Cdocs build` to preview; `Cdocs serve -o --watch` for hot reload.
+3. Point `site.themeName` in `config.json` at your new theme;
+4. Edit `map/*.json` to reshape page structure (component composition);
+5. Edit `components/` and `assets/css/style.css` for visuals;
+6. `Cdocs build` to preview; `Cdocs serve -o --watch` for hot reload.
 
 > Tip: want a new page type (e.g. "showcase")? Add `{type, map}` to the `maps` array in `config/map.json`, then write `theme/map/<type>.json` — no C++ changes needed.

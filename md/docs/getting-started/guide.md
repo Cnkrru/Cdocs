@@ -3,9 +3,26 @@
 ## 作为命令行工具使用
 
 Cdocs 是一个用 C++ 编写的单文件命令行工具，编译后即为 `Cdocs.exe`（Windows）/ `Cdocs`（Linux·macOS）。
-它读取 `.Cdocs/` 下的配置与前端资源，把 `md/docs/` 下的 Markdown 渲染成静态站点 `dist/`。
+它读取 `.Cdocs/` 下的配置与前端资源，把 `md/` 下的 Markdown 渲染成静态站点 `dist/`。
 
-### 一键构建（推荐）
+### 安装到 PATH（全局可用）
+
+发布包 = `Cdocs.exe` + `.Cdocs/`（引擎资源：主题、前端运行时、默认配置）放同一目录：
+
+1. 解压 release 包（或从源码构建后执行 `.Cdocs/tools/make_release.py` 生成 `release/`）；
+2. 把 `release/` 目录加入系统 PATH 环境变量；
+3. 新开终端，任意目录直接运行 `Cdocs`。
+
+```bash
+cd 任意目录
+Cdocs init mysite      # 建站（自动复制引擎资源 + 自动构建，开箱即看）
+cd mysite
+Cdocs serve            # 本地预览
+```
+
+> 挂到 PATH 后，路径相对当前终端目录（CWD）解析：进到哪个项目目录跑 `Cdocs`，处理的就是哪个项目的 `md/` 与 `.Cdocs/`——与 Hugo 行为一致。
+
+### 一键构建（源码开发时）
 
 在项目根目录执行构建脚本——它会先编译生成器（当 `Cdocs.exe` 缺失或源码有更新时），
 再生成站点并补齐 RSS / PWA：
@@ -31,6 +48,9 @@ Cdocs build [输入] [输出]  # 构建站点，默认 md → dist
 Cdocs serve [-p 端口]     # 构建并启动本地预览（内置服务器，默认 http://localhost:8088）
 Cdocs doctor              # 环境自检
 Cdocs check               # 质量检查（死链/token/数据孔）
+Cdocs theme               # 列出可用主题 + 当前主题
+Cdocs plugins             # 列出已注册插件 + 钩子
+Cdocs versions            # 列出配置的版本
 Cdocs routes              # 页面路由清单
 Cdocs version             # 查看版本
 ```
@@ -49,7 +69,7 @@ Cdocs deploy --vercel     # 构建并发布到 Vercel
 
 - **serve** 内置一个 C++ 写的静态 HTTP 服务器，**无需安装 Python 或 Node**，仅监听本机 `127.0.0.1`，改完文档重跑即可刷新预览。
 - **init** 会把生成器引擎（`.Cdocs`）、`Cdocs.exe` 与示例文档复制到目标目录，新站点开箱即可 `build` / `serve`。
-- **doctor / check / config / routes** 是诊断命令：`doctor` 随时可跑（自检环境与配置），`check` 在构建后跑（质量检查），`config` 打印配置摘要，`routes` 列出页面路由。
+- **doctor / check / config / routes / theme / plugins / versions** 是诊断命令：`doctor` 随时可跑（自检环境与配置），`check` 在构建后跑（质量检查），`config` 打印配置摘要，`routes` 列出页面路由，`theme` / `plugins` / `versions` 分别列出主题、插件与版本。
 
 把 `.md` 文件放进 `md/docs/`，执行后会在 `dist/` 下为每篇生成 `<名字>.html`，并输出 `index.html`、`style.css` 与搜索 / SEO / RSS / PWA 产物。
 
@@ -120,8 +140,14 @@ g++ .build/md4c.o .build/md4c-html.o .build/entity.o .build/main.o .build/markdo
 - [x] 代码块语言标签（无文件名也显示语言名）
 - [x] Shortcode 正文组件（`<Tabs/>` / `<Expand/>` / `<CodeGroup/>` / `<Badge/>`，标签语法）
 - [x] 组件样式内嵌化（组件文件 = 结构 + 样式 + 交互 自包含）
-- [x] 诊断命令（`doctor` / `check` / `config` / `routes`）
-- [x] 模块解耦（builder 拆出 component / shortcode / scaffold / diag）
+- [x] 诊断命令（`doctor` / `check` / `config` / `routes` / `theme` / `plugins` / `versions`）
+- [x] 模块解耦（builder 拆出 component / shortcode / scaffold / diag / ctxdata / site_config / render_pages / versions / output）
+- [x] 数据查询 100% 插件化（博客流排序/分页、标签聚合走 Python 插件，引擎零硬编码查询）
+- [x] 多版本文档站（`site.versions` 显式声明 + `md/docs-v<v>` 快照约定，版本下拉切换）
+- [x] 多主题仓库（`themes/`：ink 水墨 / paper 纸质 / frost 玻璃拟态，`themeName` 一键切换）
+- [x] 内容架构收口（`md/` 唯一根：docs + docs-v<v> + blog；`sidebar/` → `route/` 分文件侧边栏）
+- [x] 全局安装（`release/` 发布包 = exe + 引擎资源，注册 PATH 后任意目录可用）
+- [x] 引擎全量瘦身（全项目无超 150 行函数，模块各司其职）
 
 ## 扩展能力
 

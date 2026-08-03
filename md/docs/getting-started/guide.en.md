@@ -4,9 +4,26 @@
 
 Cdocs is a single-file command-line tool written in C++. Once compiled it is `Cdocs.exe`
 (Windows) / `Cdocs` (Linux·macOS). It reads the config and front-end assets under `.Cdocs/`
-and renders the Markdown under `md/docs/` into a static site in `dist/`.
+and renders the Markdown under `md/` into a static site in `dist/`.
 
-### One-shot build (recommended)
+### Install to PATH (global use)
+
+The release package = `Cdocs.exe` + `.Cdocs/` (engine assets: themes, front-end runtime, default config) in one directory:
+
+1. Unpack the release package (or build from source and run `.Cdocs/tools/make_release.py` to produce `release/`);
+2. Add the `release/` directory to your PATH environment variable;
+3. Open a new terminal and run `Cdocs` from any directory.
+
+```bash
+cd any-directory
+Cdocs init mysite      # scaffold site (copies engine + auto-builds, ready to view)
+cd mysite
+Cdocs serve            # local preview
+```
+
+> Once on PATH, paths resolve relative to the current terminal directory (CWD): wherever you run `Cdocs`, it operates on that project's `md/` and `.Cdocs/` — same behavior as Hugo.
+
+### One-shot build (source development)
 
 Run the build script from the project root — it compiles the generator first (only when
 `Cdocs` is missing or the source changed), then generates the site and adds RSS / PWA:
@@ -32,6 +49,9 @@ Cdocs build [in] [out]    # build the site, defaults to md → dist
 Cdocs serve [-p PORT]     # build and start a local preview (built-in server, default http://localhost:8088)
 Cdocs doctor              # environment self-check
 Cdocs check               # quality check (broken links / tokens / data holes)
+Cdocs theme               # list available themes + active theme
+Cdocs plugins             # list registered plugins + hooks
+Cdocs versions            # list configured versions
 Cdocs routes              # page route listing
 Cdocs version             # show version
 ```

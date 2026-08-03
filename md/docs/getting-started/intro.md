@@ -15,38 +15,36 @@
 
 ## 核心特性
 
-- **命令行**：`init` / `new` / `section` / `build` / `serve` / `deploy` / `clean` + 诊断命令 `doctor` / `check` / `config` / `routes`
-- **内容**：Markdown（基于 md4c，支持 GFM 扩展：表格、任务列表、删除线）
-- **导航**：配置驱动的侧边栏，支持最多 6 层嵌套与分组折叠、移动端抽屉
+- **命令行**：`init` / `new` / `section` / `build` / `serve` / `deploy` / `clean` + 诊断命令 `doctor` / `check` / `config` / `routes` / `theme` / `plugins` / `versions`
+- **内容**：Markdown（基于 md4c，支持 GFM 扩展：表格、任务列表、删除线）；`md/` 唯一根（docs + docs-v<v> 版本 + blog）
+- **导航**：配置驱动的分文件侧边栏（`route/`），支持最多 6 层嵌套与分组折叠、移动端抽屉
 - **搜索**：客户端全文搜索（FlexSearch），标题/正文分域 + 命中高亮
-- **主题**：明暗双主题，首次跟随系统、记忆偏好
+- **主题**：多主题仓库（`themes/`：ink 水墨 / paper 纸质 / frost 玻璃拟态），明暗双主题，`themeName` 一键换肤
 - **增强**：代码高亮 / 复制按钮、Admonitions 提示框、`Mermaid` 流程图、KaTeX 公式
 - **正文组件**：`<Tabs/>` `<Expand/>` `<CodeGroup/>` `<Badge/>` 短代码（标签语法，组件样式自包含）
 - **体验**：⌘K 命令面板、图片灯箱、打印 / 导出 PDF、「本页有帮助吗？」反馈
 - **多语言**：i18n（`{{key}}` + 扁平 JSON 字典）
+- **版本化**：多版本文档站（`site.versions` 显式声明 + 快照约定），版本下拉切换、保持语言
+- **插件化**：数据查询（博客流/标签聚合）100% 走 Python 插件，`on_config` / `on_data_query` / `on_page_rendered` / `on_done` / `setup` 钩子
 - **发布**：每页 SEO、sitemap、robots、RSS 2.0 / JSON Feed、PWA 离线
 
 ## 三步上手
 
 ```bash
-# 1) 一键构建（自动编译生成器 → 生成站点 → RSS → PWA）
-.Cdocs\tools\build.cmd          # Windows
-bash .Cdocs/tools/build.sh      # Linux / macOS
+# 方式 A：全局安装（发布包 release/ 加入 PATH 后）
+Cdocs init mysite         # 建站（自动复制引擎 + 自动构建，开箱即看）
+cd mysite
+Cdocs serve               # 本地预览（内置 C++ 服务器，默认 http://localhost:8088）
 
-# 2) 本地预览（内置 C++ 静态服务器，默认 http://localhost:8088）
-Cdocs serve
-
-# 3) 新建一个独立站点（复制引擎 + Cdocs.exe + 示例 md/docs/intro.md）
-Cdocs new my-docs
+# 方式 B：源码构建
+.Cdocs\tools\build.cmd    # Windows 一键构建（编译 → 生成 → RSS → PWA）
+bash .Cdocs/tools/build.sh  # Linux / macOS
 ```
 
-> 提示：`serve` 内置一个 C++ 写的 HTTP 服务器，**无需安装 Python 或 Node**，仅监听本机 `127.0.0.1`；改完 `md/docs/` 重跑即可刷新预览。
+> 提示：`serve` 内置一个 C++ 写的 HTTP 服务器，**无需安装 Python 或 Node**，仅监听本机 `127.0.0.1`；改完 `md/` 重跑即可刷新预览。
 
 ## 接下来
 
 - 想了解命令用法与写作语法，读 [使用指南](guide.html)。
 - 想看命令行与配置文件字段，读 [接口说明](../reference/api.html)。
 - 想了解「从 Markdown 到上线」的完整链路，读 [渲染管线](../generator/pipeline.html)。
-
-
-测试热重载内容

@@ -333,13 +333,20 @@ static void write_config_json(const fs::path& dir, const std::string& stem,
       << "    },\n"
       << "    \"editLink\": { \"base\": \"\", \"docsDir\": \"md\" },\n"
       << "    \"route\": {\n";
+    // 路由映射行（docs/docs-v1/blog 按需出现）：先收集再输出，行间补逗号，避免仅文档模式尾逗号导致 JSON 非法
+    std::vector<std::string> routeLines;
     if (needDocs)
-        o << (withVersion ? "      \"docs\": \"route/docs.json\",\n"
-                          : "      \"md\": \"route/docs.json\",\n");
+        routeLines.push_back(withVersion ? "      \"docs\": \"route/docs.json\""
+                                         : "      \"md\": \"route/docs.json\"");
     if (withVersion)
-        o << "      \"docs-v1\": \"route/docs-v1.json\",\n";
+        routeLines.push_back("      \"docs-v1\": \"route/docs-v1.json\"");
     if (needBlog)
-        o << "      \"blog\": \"route/blog.json\"\n";
+        routeLines.push_back("      \"blog\": \"route/blog.json\"");
+    for (size_t i = 0; i < routeLines.size(); i++) {
+        o << routeLines[i];
+        if (i + 1 < routeLines.size()) o << ",";
+        o << "\n";
+    }
     o << "    }";
     if (withVersion)
         o << ",\n    \"versions\": [\n"

@@ -4,8 +4,8 @@ Cdocs is a **CLI-driven static documentation site generator** with no public C++
 
 | Layer | Location | Purpose |
 | --- | --- | --- |
-| Config | `.Cdocs/config/config.json` + `route.json` | Site metadata, feature toggles, navigation |
-| Theme | `.Cdocs/theme/` | Page skeleton (`layout.html`) + frontend assets (`assets/`); switch theme = replace folder |
+| Config | `.Cdocs/config/config.json` + `route/` (per-area sidebars) | Site metadata, feature toggles, navigation |
+| Theme | `themes/<name>/` | Page maps (`map/*.json`) + components (`components/`) + frontend assets (`assets/`); switch theme = change folder + set `themeName` |
 | Plugin | `.Cdocs/plugins/<name>/plugin.json` | External scripts hooked into the build lifecycle |
 
 ---
@@ -82,7 +82,7 @@ Located at `.Cdocs/config/config.json`, organized in blocks: `site` (global) / `
     },
     "editLink": { "base": "https://github.com/me/docs/edit/main", "docsDir": "md" },
     "themeVars": { "--radius": "12px", "--sidebar-left-w": "248px" },
-    "customCss": ".Cdocs/theme/assets/css/custom.css",
+    "customCss": "themes/ink/assets/css/custom.css",
     "compress": true,
     "jpegQuality": 82,
     "deploy": { "remote": "", "branch": "gh-pages", "message": "" }
@@ -124,19 +124,21 @@ Located at `.Cdocs/config/config.json`, organized in blocks: `site` (global) / `
 
 ## 3. Theme API
 
-A theme is a single folder `.Cdocs/theme/` — **switching themes = replacing the folder** (full spec: [themes](./themes)).
+A theme is a folder `themes/<name>/` — **switching themes = changing folder + setting `site.themeName`** (full spec: [themes](./themes)).
 
 ```
-.Cdocs/theme/
+themes/ink/
 ├── theme.json          theme metadata (name/version/description/…)
-├── templates/
-│   └── layout.html     page skeleton template (placeholder injection, falls back to built-in)
+├── map/                page map JSON (one per page type, extends inheritance)
+├── components/         components (structure+style+interaction self-contained, incl. shortcodes/)
 └── assets/             frontend assets (copied as a whole to dist/assets/)
 ```
 
-- `layout.html` receives engine-generated blocks via `{{key}}`: `{{header}}`, `{{left_nav}}`, `{{body}}`, `{{pager}}`, `{{footer}}`, etc. (full table in the themes doc).
-- `assets/` is copied verbatim to `dist/<loc>/assets/`; the browser URL never changes. Build output also adds `assets/deps/` (runtime deps) and `assets/search.json` (search index).
-- Legacy layout (`.Cdocs/assets/` + `.Cdocs/templates/` at engine root) still builds.
+- Page structure is described by `map/*.json` (five section conventions: html/component/if/each/sections); page elements come from `components/`.
+- Components receive engine data via `{{key}}` holes: `{{header}}` / `{{body}}` / `{{slot}}` / `{{a.b.c}}`, etc. (full table in the themes doc).
+- **Styling is componentized**: components embed their `<style>` (structure+style+interaction in one file); copying a component file brings its styles along. Icon rules with `url()` and theme variables stay in `style.css`.
+- `assets/` is copied verbatim to `dist/<loc>/assets/`; build output also adds `assets/deps/` (runtime deps) and `assets/search.json` (search index).
+- Map registry lives in `.Cdocs/config/map.json` (`maps` array + `templates.base`).
 - `config.site.themeVars` overrides theme CSS variables; `config.site.customCss` appends custom styles.
 
 ## 4. Plugin API
@@ -181,36 +183,38 @@ Bilingual convention: `xxx.md` (default locale) + `xxx.en.md` (English) are pair
 
 Docusaurus-style multi-version docs: **explicit config wins, convention over configuration**.
 
-- Explicit: `site.versions` in config declares versions, labels, source dirs, default version.
-- Convention: `docs-*` directories are auto-detected as historical versions (e.g. `docs-v1`); current = `docs`. Each version builds independently; root redirects to the current version; a version dropdown switches between them.
+- Explicit: `site.versions` in config declares versions (`name`/`label`/`source`/`default`); content lives under `md/` — current = `md/docs`, snapshots = `md/docs-<v>`.
+- Convention: without config, sibling `<md>-*` snapshot dirs (e.g. `md-v1`) are auto-detected as historical versions. Each version builds independently; root redirects to the default version; a version dropdown switches between them.
 
 ## 8. Blog stream
 
-`docs/blog/` directory convention (like Hugo's `content/blog`):
+`md/blog/` directory convention (like Hugo's `content/blog`):
 
-- `docs/blog/xxx.md` (+ `xxx.en.md`) → blog list + detail pages, newest first, paginated (10/page).
+- `md/blog/xxx.md` (+ `xxx.en.md`) → blog list + detail pages, newest first, paginated (10/page).
 - Detail pages show date, reading time, prev/next navigation.
 - Posts are merged into RSS/JSON Feed, search index, and tag aggregation.
 - `date` front matter controls ordering; `draft: true` hides by default.
+- **Query logic is 100% plugin-driven**: ordering/pagination/home feed come from the `blog-query` Python plugin via the `on_data_query` hook — edit the script to customize.
 
 ## 9. Navigation (sidebar)
 
-Sidebars can be **split per version / area** (recommended): drop multiple JSON files under `.Cdocs/config/sidebar/`
-(file names are free), and declare the mapping in `config.json` `site.sidebar` — file path → which folder:
+Sidebars can be **split per version / area** (recommended): drop multiple JSON files under `.Cdocs/config/route/`
+(file names are free), and declare the mapping in `config.json` `site.route` — file path → which folder:
 
 ```json
 "site": {
-  "sidebar": {
-    "docs":    "sidebar/docs.json",   // current version (source dir docs)
-    "docs-v1": "sidebar/v1.json",     // historical version (source dir docs-v1)
-    "blog":    "sidebar/blog.json"    // blog area
+  "route": {
+    "docs":    "route/docs.json",   // current version (source dir md/docs)
+    "docs-v1": "route/docs-v1.json",// historical version (source dir md/docs-v1)
+    "blog":    "route/blog.json"    // blog area
   }
 }
 ```
 
-- key = version source dir name (`docs`, `docs-v1`..., auto-detected) or `blog`; value = path relative to `.Cdocs/config/`.
+- key = version source dir name (`docs`, `docs-v1`..., matching `site.versions[].source`) or `blog`; value = path relative to `.Cdocs/config/`.
 - Each version loads its own sidebar when built; blog pages (list/detail) load the `blog` one.
 - Missing mapping / missing file → falls back to the global `.Cdocs/config/route.json` (zero regression for old layouts).
+- Legacy field name `site.sidebar` is still auto-detected.
 
 JSON format — `sidebar` array, up to 6 levels:
 
@@ -221,7 +225,7 @@ JSON format — `sidebar` array, up to 6 levels:
 ] } ] }
 ```
 
-`title` supports `{{key}}`; `file` maps to `docs/<file>.md`; `url` for external links (mutually exclusive with `file`);
+`title` supports `{{key}}`; `file` maps to `md/<file>.md` (relative to the source root, e.g. `docs/intro`); `url` for external links (mutually exclusive with `file`);
 in a blog sidebar use `file: "blog/xxx"` to point at a post.
 
 ## 10. Incremental build & DX

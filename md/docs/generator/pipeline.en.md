@@ -36,7 +36,7 @@ Compiles only when `Cdocs.exe` is missing or a source file is newer. Key convent
 - RSS 2.0 + JSON Feed (built-in `feeds.cpp`, injecting `<link rel="alternate">` per page);
 - PWA (built-in `pwa.cpp`): `manifest.webmanifest` + `sw.js` + cache-version fingerprint (visited pages work offline);
 - Image compression (WebP), HTML/CSS minification, asset fingerprints (`compress.cpp`);
-- Recursively copies `.Cdocs/theme/assets/` and `.Cdocs/deps/` (third-party libs) into `dist/assets/` — **fully offline**;
+- Recursively copies `themes/<name>/assets/` and `.Cdocs/deps/` (third-party libs) into `dist/assets/` — **fully offline**;
 - Root `index.html` redirects to the default locale via `<meta http-equiv="refresh">`.
 
 ## Extending build output

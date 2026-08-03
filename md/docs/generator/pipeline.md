@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-  SRC["md/*.md + .Cdocs/{config,map,sidebar,i18n,theme}"]
+  SRC["md/*.md + .Cdocs/{config,route,i18n} + themes/"]
   EXE["Cdocs.exe<br/>（C++ 生成器，20 个模块）"]
   OUT["dist/ 纯静态<br/>HTML · SEO · sitemap · robots<br/>RSS · Feed · PWA · search.json"]
 
@@ -36,7 +36,7 @@ flowchart LR
 - RSS 2.0 + JSON Feed（`feeds.cpp` 内建，向各页注入 `<link rel="alternate">`）；
 - PWA（`pwa.cpp` 内建）：`manifest.webmanifest` + `sw.js` + 缓存版本指纹（已访问页断网可看）；
 - 图片压缩（WebP）、HTML/CSS 压缩、资源指纹（`compress.cpp`）；
-- 递归拷贝 `.Cdocs/theme/assets/` 与 `.Cdocs/deps/`（第三方库）进 `dist/assets/`，**离线可用**；
+- 递归拷贝 `themes/<name>/assets/` 与 `.Cdocs/deps/`（第三方库）进 `dist/assets/`，**离线可用**；
 - 根 `index.html` 用 `<meta http-equiv="refresh">` 重定向默认语言。
 
 ## 如何扩展构建产物

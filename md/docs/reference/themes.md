@@ -2,12 +2,32 @@
 
 Cdocs 的**主题 = 一个文件夹**。引擎负责生成数据（导航树、目录、正文、分页…），页面结构由 **JSON 地图（map）** 描述、页面元素由 **组件（components）** 提供、视觉由**主题变量 + 组件内嵌样式**承载。复制一个主题文件夹、改几行配置，即可整体换肤——这就是 Cdocs 的主题规范。
 
-## 目录结构
+## 多主题仓库
 
-主题位于引擎目录下：`.Cdocs/theme/`，出厂自带「水墨」主题：
+主题收口在 **`themes/` 多主题仓库**（引擎根目录下），出厂自带 3 套主题：
 
 ```
-.Cdocs/theme/
+themes/
+├── ink/       # 水墨风（默认）：宣纸米白 + 朱砂红 + 夜墨
+├── paper/     # 纸质风：窄栏、默认浅色、顶部导航、首页卡片流
+└── frost/     # 玻璃拟态：毛玻璃卡片、渐变背景、sticky 头
+```
+
+当前生效主题由 `config.json` 的 `site.themeName` 指定（缺省 = `ink`）：
+
+```json
+"site": {
+  "themeName": "frost",      // themes/ 下的子目录名；省略 = 默认主题 ink
+  "theme": "dark"            // 默认明暗（light/dark）
+}
+```
+
+## 目录结构
+
+每个主题都是自包含的文件夹 `themes/<name>/`：
+
+```
+themes/ink/
 ├── theme.json                 # 主题元数据（name/version/description…）
 ├── map/                       # 页面地图：每个页面类型一个 JSON（核心！）
 │   ├── home.json              #   首页
@@ -27,6 +47,8 @@ Cdocs 的**主题 = 一个文件夹**。引擎负责生成数据（导航树、�
     ├── pwa/                   #   sw.js + icon.svg（PWA 离线）
     └── icons/                 #   内联 SVG 图标
 ```
+
+> 机制组件（机制主题组件，如搜索/灯箱等与具体视觉无关的交互组件）在主题自身缺失时，会从**默认主题**回退共享——换肤无需复制全套组件。
 
 ## theme.json —— 主题元数据
 
@@ -49,7 +71,19 @@ Cdocs 的**主题 = 一个文件夹**。引擎负责生成数据（导航树、�
 
 ## map/ —— 页面地图（JSON 驱动，主题核心）
 
-**每个页面类型一个 JSON 文件**，页面 = 按序执行的一组「章节」。地图由 `config/map.json` 注册（`maps` 数组：`{type, map}`），也支持 `extends` 继承（`base.json` 定义公共骨架，子地图用 `{"slot": X}` 槽位展开替换）。
+**每个页面类型一个 JSON 文件**，页面 = 按序执行的一组「章节」。地图由 `.Cdocs/config/map.json` 注册（`maps` 数组：`{type, map, mode}`），也支持 `extends` 继承（`base.json` 定义公共骨架，子地图用 `{"slot": X}` 槽位展开替换）。
+
+```json:.Cdocs/config/map.json
+{
+  "maps": [
+    { "type": "home", "map": "map/home.json", "mode": "home" },
+    { "type": "doc",  "map": "map/doc.json",  "mode": "pages" },
+    { "type": "blog", "map": "map/blog.json", "mode": "blog-list" }
+    // … blog-post / tags / tag-page / 404 …
+  ],
+  "templates": { "base": "map/base.json" }
+}
+```
 
 章节有五种约定：
 
@@ -100,10 +134,19 @@ Cdocs 的**主题 = 一个文件夹**。引擎负责生成数据（导航树、�
 
 ## 如何做一个新主题
 
-1. 复制 `.Cdocs/theme/` 为 `.Cdocs/theme-my/`；
+1. 复制 `themes/ink/` 为 `themes/my-theme/`；
 2. 改 `theme.json`（name/version/description）；
-3. 改 `map/*.json` 调整页面结构（组件组合）；
-4. 改 `components/` 与 `assets/css/style.css` 调整视觉；
-5. `Cdocs build` 预览；`Cdocs serve -o --watch` 热重载。
+3. 在 `config.json` 的 `site.themeName` 指向新主题名；
+4. 改 `map/*.json` 调整页面结构（组件组合）；
+5. 改 `components/` 与 `assets/css/style.css` 调整视觉；
+6. `Cdocs build` 预览；`Cdocs serve -o --watch` 热重载。
 
 > 提示：想加页面类型（如「案例展示」），在 `config/map.json` 的 `maps` 数组加一项 `{type, map}`，再写 `theme/map/<type>.json` 即可——不改 C++。
+
+## 内置主题清单
+
+| 主题 | 风格 | 特性 |
+| --- | --- | --- |
+| `ink` | 国风水墨（默认） | 宣纸米白 + 朱砂红，侧边栏布局，含语言下拉 |
+| `paper` | 纸质文档 | 窄栏阅读、默认浅色、顶部导航、首页卡片流 |
+| `frost` | 玻璃拟态 | 毛玻璃卡片、渐变背景、sticky 头、按钮推右 |

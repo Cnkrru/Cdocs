@@ -49,9 +49,10 @@ Cdocs [全局旗标] <子命令> [参数]
 ## 行为约定
 
 - **无参数**运行打印帮助并退出（exit 0）；双击 exe 无参数打印帮助并等待 **Ctrl+C**（防窗口一闪而过）。
-- **`serve` 是常驻进程**：按 **Ctrl+C** 干净退出；`-w/--watch` 监听 `docs/` 与 `.Cdocs/config` 变化自动重建。
+- **`serve` 是常驻进程**：按 **Ctrl+C** 干净退出；`-w/--watch` 监听 `md/` 与 `.Cdocs/config` 变化自动重建。
 - **`check` 在构建后运行**（检查 `dist/`）；`doctor` 随时可跑（不构建）。
-- **路径相对当前终端目录（CWD）解析**：挂到 PATH 后，进到哪个项目目录跑 `Cdocs`，处理的就是哪个项目的 `docs/` 与 `.Cdocs/`。
+- **路径相对当前终端目录（CWD）解析**：挂到 PATH 后，进到哪个项目目录跑 `Cdocs`，处理的就是哪个项目的 `md/` 与 `.Cdocs/`。
+- **`init` 从 exe 旁的 `.Cdocs/` 复制引擎资源**（theme/deps）到新站，`--no-engine` 时仅生成内容骨架——因此发布包（`release/` = `Cdocs.exe` + `.Cdocs/`）应整体放入 PATH，保证 `init` 开箱即看。
 - 在非 Cdocs 项目目录跑 `build` 会报「找不到 `.Cdocs/config`」——与在非 Hugo 站点里跑 `hugo` 行为一致。
 
 ## 示例
