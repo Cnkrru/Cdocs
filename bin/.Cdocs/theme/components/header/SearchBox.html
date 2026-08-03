@@ -1,6 +1,14 @@
-      <input id="search" class="search" type="search" placeholder="{{header.search_placeholder}}" autocomplete="off">
+      <div class="search-box">
+        <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="search" class="search" type="search" placeholder="{{header.search_placeholder}}" autocomplete="off">
+      </div>
 <style>
-.search {
+.search-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.search-box .search {
   padding: 6px 32px 6px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -8,13 +16,24 @@
   color: var(--fg);
   outline: none;
 }
-.search:focus {
+.search-box .search:focus {
   border-color: var(--accent);
 }
+.search-ico {
+  position: absolute;
+  right: 9px;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
 @media (max-width:560px) {
-  .search {
+  .search-box .search {
     width: 96px;
     padding: 5px 28px 5px 8px;
+  }
+  .search-box .search-ico {
+    right: 7px;
   }
 }
 </style>

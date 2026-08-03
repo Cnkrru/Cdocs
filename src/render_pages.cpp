@@ -253,6 +253,7 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
         pages[i].lastmod  = fm.lastmod;
         pages[i].aliases  = fm.aliases;
         TocResult toc = build_toc(pages[i].html);
+        pages[i].html = toc.html;   // 修复：正文必须用注入 slug id 的版本（TOC 锚点/滚动高亮依赖）
         tocHtml[i] = toc.html; tocNav[i] = toc.toc;
         tocItemsStore[i] = toc.items;   // TOC 数据（TocSidebar 组件）
         std::string excerpt = collapse_ws(strip_tags(pages[i].html));

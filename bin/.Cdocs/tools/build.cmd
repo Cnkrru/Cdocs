@@ -105,7 +105,7 @@ exit /b 1
 
 :run
 echo [1/1] 生成静态站点（Cdocs，内建 RSS / JSON Feed / PWA / SEO）...
-call %BIN%
+call %BIN% build
 if errorlevel 1 (
   echo Cdocs 执行失败。
   exit /b 1

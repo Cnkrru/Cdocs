@@ -35,6 +35,27 @@
       "title": "{{navGenerator}}"
     },
     {
+      "title": "{{navImplementation}}",
+      "items": [
+        {
+          "title": "渲染管线",
+          "file": "implementation/rendering"
+        },
+        {
+          "title": "主题系统",
+          "file": "implementation/theming"
+        },
+        {
+          "title": "插件机制",
+          "file": "implementation/plugins"
+        },
+        {
+          "title": "构建优化",
+          "file": "implementation/build"
+        }
+      ]
+    },
+    {
       "items": [
         {
           "file": "reference/api",
