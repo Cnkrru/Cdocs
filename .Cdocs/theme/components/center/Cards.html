@@ -1,2 +1,10 @@
 <section class="cards">
 {{slot}}</section>
+<style>
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill,minmax(220px,1fr));
+  gap: var(--gap);
+  margin-top: 30px;
+}
+</style>

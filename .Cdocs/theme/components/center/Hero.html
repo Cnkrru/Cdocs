@@ -1,2 +1,23 @@
 <section class="hero">
 {{slot}}</section>
+<style>
+/* 首页 Hero */
+.hero {
+  text-align: center;
+  padding: 60px 0 30px;
+}
+.hero h1 {
+  font-family: var(--font-serif);
+  border: none;
+  font-size: 42px;
+  color: var(--fg);
+}
+@supports (-webkit-background-clip:text) or (background-clip:text) {
+  .hero h1 {
+    background: var(--hero-grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+}
+</style>

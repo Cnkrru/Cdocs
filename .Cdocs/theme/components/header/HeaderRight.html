@@ -1,2 +1,15 @@
     <div class="topbar-right">
 {{slot}}    </div>
+<style>
+.topbar-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+@media (max-width:800px) {
+  .topbar-right {
+    margin-left: auto;
+  }
+}
+</style>
