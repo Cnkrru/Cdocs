@@ -225,9 +225,11 @@ static json header_json(const SiteConfig& cfg, const RenderOpts& opt, const std:
             if (v.name == cfg.curVersion) continue;   // current 已放入 current
             json vd;
             vd["label"] = v.label;
-            vd["href"] = curLocale.empty()
-                         ? "../" + v.name + "/index.html"
-                         : "../../" + v.name + "/" + curLocale + "/index.html";
+            // 版本链接相对当前页：relBase 补偿子目录深度（首页 "" → ../../；
+            // docs/ 下 "../" → ../../../），从 <版本>/<语言>/ 回退两级到 dist/ 再进目标版本
+            std::string verBase = relBase + (curLocale.empty() ? "../" : "../../");
+            vd["href"] = verBase + v.name
+                         + (curLocale.empty() ? "/index.html" : "/" + curLocale + "/index.html");
             d["versions"]["links"].push_back(vd);
         }
     }

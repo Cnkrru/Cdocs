@@ -201,6 +201,9 @@ void check_links(const fs::path& locOut, const std::string& loc) {
                 if (skip_target(raw)) continue;
                 fs::path rel = resolve_target(baseDir, raw);
                 if (rel.empty()) continue;
+                // 越出当前输出目录的链接跳过（如版本下拉 ../v1/、../../v1/ 指向其它版本：
+                // 多版本构建时其它版本可能尚未生成，属于跨版本链接而非死链）
+                if (*rel.begin() == "..") continue;
                 if (!target_exists(locOut, rel)) {
                     local.push_back(relPage.string() + " → " + raw);
                 }
