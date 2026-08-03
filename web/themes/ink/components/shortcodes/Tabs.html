@@ -1,0 +1,63 @@
+<div class="tabs" data-tabs>
+  <div class="tab-list" role="tablist"></div>
+  <div class="tab-panels">{{slot}}</div>
+</div>
+<style>
+/* Tabs 容器：卡片 + 顶栏按钮区（按钮由脚本从 Tab 的 data-label 生成） */
+.tabs {
+  margin: 20px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 12px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-light);
+}
+.tab-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  padding: 7px 14px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  transition: color .15s, background .15s, box-shadow .15s;
+}
+.tab-btn:hover {
+  color: var(--fg);
+  background: var(--border-light);
+}
+.tab-btn.active {
+  color: var(--accent);
+  background: var(--card);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.tab-panels {
+  padding: 14px 16px;
+}
+</style>
+<script>
+(function(){document.querySelectorAll('[data-tabs]').forEach(function(t){
+  var btns=t.querySelector('.tab-list'),pans=t.querySelectorAll('.tab-panel');
+  pans.forEach(function(p,i){var b=document.createElement('button');b.type='button';
+    b.className='tab-btn'+(i===0?' active':'');b.textContent=p.getAttribute('data-label');
+    b.addEventListener('click',function(){
+      btns.querySelectorAll('.tab-btn').forEach(function(x){x.classList.remove('active')});
+      b.classList.add('active');
+      pans.forEach(function(x){x.classList.toggle('active',x===p)});
+    });
+    btns.appendChild(b);
+    if(i===0)p.classList.add('active');
+  });
+})})();
+</script>

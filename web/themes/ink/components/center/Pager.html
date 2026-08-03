@@ -1,0 +1,69 @@
+<nav class="pager">
+{{slot}}</nav>
+<style>
+/* 上下篇 */
+.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--gap);
+  margin-top: 48px;
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+.pager-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-decoration: none;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  transition: border-color .15s, box-shadow .15s;
+}
+.pager-item:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+.pager-item.next {
+  text-align: right;
+}
+/* 无上篇/下篇时的占位按钮（置灰 + 虚线 + 禁交互） */
+.pager-item.disabled {
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+  opacity: .55;
+  cursor: default;
+  pointer-events: none;
+}
+.pager-item.disabled:hover {
+  border-color: var(--border);
+  box-shadow: none;
+}
+.pager-item.disabled .pager-title {
+  color: var(--muted);
+  font-weight: 400;
+}
+.pager-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.pager-title {
+  font-weight: 600;
+  color: var(--accent);
+}
+/* 箭头基础 mask（具体箭头 svg 由 style.css 的 mask-image 规则提供） */
+.pager-item.prev .pager-label::before,
+.pager-item.next .pager-label::after {
+  content: '';
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  vertical-align: -0.15em;
+  background: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+</style>

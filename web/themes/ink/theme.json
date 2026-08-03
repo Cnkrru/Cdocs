@@ -1,0 +1,9 @@
+{
+  "name": "ink",
+  "version": "1.0.0",
+  "description": "Cdocs 默认主题（水墨风：宣纸米白 + 朱砂红 + 夜墨）。复制本文件夹即为换主题。",
+  "author": "Cdocs",
+  "license": "MIT",
+  "assets": "assets",
+  "templates": "templates"
+}

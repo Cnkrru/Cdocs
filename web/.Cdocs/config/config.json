@@ -1,0 +1,123 @@
+{
+  "site": {
+    "title": "{{siteTitle}}",
+    "description": "{{siteDesc}}",
+    "theme": "dark",
+    "url": "https://cdocs.cnkrru.top",
+    "ogImage": "/icon.svg",
+    "i18n": {
+      "defaultLocale": "zh-CN",
+      "dir": ".Cdocs/i18n",
+      "locales": {
+        "zh-CN": {
+          "label": "简体中文"
+        },
+        "en": {
+          "label": "English"
+        }
+      }
+    },
+    "editLink": {
+      "base": "https://github.com/Cnkrru/Cdocs/edit/main",
+      "docsDir": "md"
+    },
+    "themeVars": {
+      "--radius": "12px",
+      "--sidebar-left-w": "248px"
+    },
+    "customCss": ".Cdocs/assets/custom.css",
+    "home": {
+      "cards": [
+        {
+          "file": "docs/getting-started/intro",
+          "desc": "Cdocs 是什么、为什么、怎么用"
+        },
+        {
+          "file": "docs/getting-started/guide",
+          "desc": "安装到 PATH、命令行用法、i18n/版本化/评论等机制"
+        },
+        {
+          "file": "docs/generator/commands",
+          "desc": "全局旗标、子命令、退出码一览"
+        },
+        {
+          "file": "docs/generator/architecture",
+          "desc": "模块化生成器 + run_build 纯编排 + 前端增量式"
+        },
+        {
+          "file": "docs/generator/features",
+          "desc": "零依赖产物、SEO/RSS/PWA、插件系统等能力清单"
+        }
+      ]
+    },
+    "compress": true,
+    "versions": [
+      {
+        "name": "v2",
+        "label": "2.x",
+        "source": "md/docs",
+        "default": true
+      },
+      {
+        "name": "v1",
+        "label": "1.x",
+        "source": "md/docs-v1",
+        "default": false
+      }
+    ],
+    "route": {
+      "docs": "route/docs.json",
+      "docs-v1": "route/docs-v1.json",
+      "blog": "route/blog.json"
+    }
+  },
+  "head": {
+    "logo": "{{brand}}",
+    "showSearch": true,
+    "showThemeToggle": true,
+    "github": "https://github.com/Cnkrru/Cdocs",
+    "nav": [
+      {
+        "title": "{{navHome}}",
+        "file": "index"
+      },
+      {
+        "title": "{{navDocs}}",
+        "file": "docs/getting-started/intro"
+      },
+      {
+        "title": "{{navBlog}}",
+        "file": "blog/index"
+      }
+    ]
+  },
+  "center": {
+    "plugins": [
+      "search",
+      "dark-mode",
+      "pager",
+      "back-to-top",
+      "toc",
+      "code-highlight"
+    ],
+    "backToTop": {
+      "threshold": 300,
+      "label": "顶部"
+    },
+    "comments": {
+      "provider": "giscus",
+      "repo": "Cnkrru/Cdocs",
+      "repoId": "R_kgDOTrIf6w",
+      "category": "Announcements",
+      "categoryId": "DIC_kwDOTrIf684DChsc",
+      "mapping": "pathname",
+      "theme": "preferred_color_scheme"
+    },
+    "analytics": {
+      "vercel": true
+    }
+  },
+  "footer": {
+    "text": "{{footerText}}"
+  }
+}

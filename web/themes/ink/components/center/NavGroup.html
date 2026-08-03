@@ -1,0 +1,39 @@
+  <button class="nav-group" style="--depth:0" type="button" aria-expanded="true">{{title}}<span class="caret">▾</span></button>
+  <div class="nav-group-items" style="--depth:0">
+{{slot}}  </div>
+<style>
+/* 分组标题（可点击按钮，折叠/展开分组） */
+.sidebar.left .nav-group {
+  display: block;
+  padding: 7px 12px;
+  border-radius: 8px;
+  margin-bottom: 3px;
+  font-size: 14px;
+}
+.sidebar.left .nav-group {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 12px;
+  letter-spacing: .10em;
+  color: var(--muted);
+  font-weight: 700;
+  margin-top: 10px;
+}
+.sidebar.left .nav-group:hover {
+  color: var(--fg);
+}
+.sidebar.left .nav-group .caret {
+  float: right;
+  font-size: 9px;
+  line-height: 1.6;
+  opacity: .55;
+  transition: transform .15s;
+}
+.sidebar.left .nav-group.collapsed .caret {
+  transform: rotate(-90deg);
+}
+</style>

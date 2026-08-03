@@ -1,0 +1,76 @@
+<div class="codegroup" data-codegroup>
+  <div class="codegroup-bar"></div>
+  <div class="codegroup-body">{{slot}}</div>
+</div>
+<style>
+/* CodeGroup：一体式卡片（顶栏按钮 + 代码区），按钮由脚本从 CodeBlock 的 lang 生成 */
+.codegroup {
+  margin: 20px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--pre-bg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.codegroup-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 8px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-light);
+}
+.codegroup-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 6px 13px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.codegroup-btn:hover {
+  color: var(--fg);
+}
+.codegroup-btn.active {
+  color: var(--fg);
+  background: var(--pre-bg);
+  border-color: var(--border-light);
+}
+/* 组内：面板切换 + 代码区融入容器（语言名已由 bar 按钮显示，隐藏 label） */
+.codegroup-body .codeblock {
+  display: none;
+}
+.codegroup-body .codeblock.active {
+  display: block;
+}
+.codegroup .codeblock .codeblock-label {
+  display: none;
+}
+.codegroup .codeblock pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+</style>
+<script>
+(function(){document.querySelectorAll('[data-codegroup]').forEach(function(t){
+  var bar=t.querySelector('.codegroup-bar'),items=t.querySelectorAll('.codeblock');
+  items.forEach(function(p,i){var b=document.createElement('button');b.type='button';
+    b.className='codegroup-btn'+(i===0?' active':'');b.textContent=p.querySelector('.codeblock-label')?
+      p.querySelector('.codeblock-label').textContent:('块 '+(i+1));
+    b.addEventListener('click',function(){
+      bar.querySelectorAll('.codegroup-btn').forEach(function(x){x.classList.remove('active')});
+      b.classList.add('active');
+      items.forEach(function(x){x.classList.toggle('active',x===p)});
+    });
+    bar.appendChild(b);
+    if(i===0)p.classList.add('active');
+  });
+})})();
+</script>

@@ -27,15 +27,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
       - name: 编译 Cdocs 生成器（build.sh 全模块 + libwebp + zlib）
-        run: bash .Cdocs/tools/build.sh
+        run: bash web/.Cdocs/tools/build.sh
 
       - name: 生成静态站点
-        run: ./Cdocs build
+        run: cd web && ../Cdocs build
 
       - name: 上传产物
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: web/dist
 
   deploy:
     needs: build

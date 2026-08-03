@@ -1,0 +1,84 @@
+<aside class="sidebar left">
+  <nav>
+{{slot}}  </nav>
+</aside>
+<style>
+/* 左侧边栏（支持多层嵌套，缩进由 --depth 控制） */
+.sidebar.left {
+  width: var(--sidebar-left-w);
+  flex: 0 0 var(--sidebar-left-w);
+  position: sticky;
+  top: var(--topbar-h);
+  height: calc(100vh - var(--topbar-h));
+  overflow: auto;
+  padding: 24px 12px;
+  border-right: 1px solid var(--border);
+}
+.sidebar.left nav a {
+  display: block;
+  padding: 7px 12px;
+  border-radius: 8px;
+  margin-bottom: 3px;
+  font-size: 14px;
+  padding-left: calc(12px + var(--depth, 0) * 14px);
+}
+.sidebar.left nav a {
+  color: var(--muted);
+  text-decoration: none;
+  transition: background .12s, color .12s;
+}
+.sidebar.left nav a:hover {
+  background: var(--panel);
+  color: var(--fg);
+}
+.sidebar.left nav a.active {
+  background: var(--accent);
+  color: #fff;
+}
+.sidebar.left nav a.active:hover {
+  background: var(--accent-active);
+  color: #fff;
+}
+/* 窄屏：左侧栏改为抽屉式滑出，汉堡按钮唤出，背景遮罩关闭 */
+@media (max-width:800px) {
+  .sidebar.left {
+    position: fixed;
+    top: var(--topbar-h);
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: 88vw;
+    max-width: 340px;
+    height: auto;
+    padding: 0;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    box-shadow: 6px 0 28px rgba(0,0,0,.28);
+  }
+  /* 抽屉顶部：搜索框 / GitHub 由 nav.js relocateMobileTools 移入 */
+  .sidebar.left > .mobile-tools {
+    display: block;
+    padding: 12px 12px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar.left.open {
+    transform: translateX(0);
+  }
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 55;
+    display: none;
+  }
+  .sidebar-backdrop.show {
+    display: block;
+  }
+  /* 首页无侧边栏 */
+  .page-home .sidebar.left {
+    display: none !important;
+  }
+}
+</style>

@@ -1,0 +1,24 @@
+      <nav class="topbar-nav">
+{{slot}}      </nav>
+<style>
+/* 页眉右侧导航（i18n 按钮左侧）：紧凑链接组，最多 6 个 */
+.topbar-nav {
+  display: flex;
+  gap: 14px;
+  margin-right: 6px;
+}
+.topbar-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.topbar-nav a:hover {
+  color: var(--fg);
+}
+@media (max-width:800px) {
+  .topbar-nav {
+    display: none;
+  }
+}
+</style>
