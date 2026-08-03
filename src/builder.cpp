@@ -647,10 +647,62 @@ static std::string compose_sections(const json& sections, const json& data,
     return out;
 }
 
-// 地图主入口：读 config/map.json 注册表 → theme/map/<name>.json → 遍历 sections → 数据孔替换
+// 递归解析地图继承（v4）：子地图 "extends" 声明父级（kv 约定），父级 {"slot": X} 槽位被子 sections 展开替换。
+// 父级路径：config/map.json 的 templates 注册表优先，否则 theme/map/<name>.json。支持多级继承；循环检测报错。
+static json resolve_map_sections(const std::string& mapName, const json& mapRoot,
+                                 const json& templates, std::vector<std::string>& chain) {
+    json sections = mapRoot.value("sections", mapRoot);
+    if (!mapRoot.is_object() || !mapRoot.contains("extends") || !mapRoot["extends"].is_string())
+        return sections;   // 无父级：自身 sections 即最终
+    std::string parentName = mapRoot["extends"].get<std::string>();
+    if (std::find(chain.begin(), chain.end(), parentName) != chain.end()) {
+        if (g_comp_warned.insert("extends:" + parentName).second) {
+            std::cerr << color::warn("警告: ") << "地图继承循环: ";
+            for (const auto& c : chain) std::cerr << c << " → ";
+            std::cerr << parentName << "（子地图 sections 独立使用）\n";
+        }
+        return sections;
+    }
+    fs::path pp = theme_root() / "map" / (parentName + ".json");
+    if (templates.is_object() && templates.contains(parentName) && templates[parentName].is_string())
+        pp = theme_root() / templates[parentName].get<std::string>();
+    std::error_code ec;
+    if (!fs::is_regular_file(pp, ec)) {
+        if (g_comp_warned.insert("extends:" + parentName).second)
+            std::cerr << color::warn("警告: ") << "父级地图不存在: " << pp
+                      << "（子地图 sections 独立使用）\n";
+        return sections;
+    }
+    json parent;
+    try { parent = json::parse(read_file(pp)); } catch (...) {
+        if (g_comp_warned.insert("extends:" + parentName).second)
+            std::cerr << color::warn("警告: ") << "父级地图 JSON 解析失败: " << pp << "\n";
+        return sections;
+    }
+    chain.push_back(parentName);
+    json parentSections = resolve_map_sections(parentName, parent, templates, chain);
+    chain.pop_back();
+    if (!parentSections.is_array()) return sections;
+    // 父级 sections 中纯 {"slot": X} 占位（无 component/html）→ 用子 sections 展开替换
+    json merged = json::array();
+    bool filled = false;
+    for (const auto& sec : parentSections) {
+        if (sec.is_object() && sec.contains("slot") && !sec.contains("component") && !sec.contains("html")) {
+            for (const auto& sub : sections) merged.push_back(sub);
+            filled = true;
+        } else merged.push_back(sec);
+    }
+    if (!filled && g_comp_warned.insert("slot:" + mapName).second)
+        std::cerr << color::warn("警告: ") << "父级地图 " << parentName
+                  << " 没有 {\"slot\": ...} 槽位，子地图内容未注入\n";
+    return merged;
+}
+
+// 地图主入口：读 config/map.json 注册表 → theme/map/<name>.json（递归解析 extends 继承）→ 遍历 sections → 数据孔替换
 static std::string compose_page(const std::string& mapName, const json& data) {
-    // config/map.json：页面类型 → 地图文件（相对主题根）。地图不硬编码进 C++，全由注册表驱动。
+    // config/map.json：maps（页面类型 → 地图文件）+ templates（父级地图注册）。地图不硬编码进 C++。
     std::string mapPath;
+    json templates = json::object();
     fs::path cfgPath = g_engine / "config" / "map.json";
     std::error_code cec;
     if (fs::is_regular_file(cfgPath, cec)) {
@@ -658,6 +710,8 @@ static std::string compose_page(const std::string& mapName, const json& data) {
             json j = json::parse(read_file(cfgPath));
             if (j.contains("maps") && j["maps"].is_object() && j["maps"].contains(mapName))
                 mapPath = j["maps"][mapName].get<std::string>();
+            if (j.contains("templates") && j["templates"].is_object())
+                templates = j["templates"];
         } catch (...) {}
     }
     fs::path mp = mapPath.empty() ? (theme_root() / "map" / (mapName + ".json"))
@@ -677,7 +731,8 @@ static std::string compose_page(const std::string& mapName, const json& data) {
             std::cerr << color::warn("警告: ") << "页面地图 JSON 解析失败: " << mp << "\n";
         return {};
     }
-    const json& sections = map.contains("sections") ? map["sections"] : map;
+    std::vector<std::string> chain;
+    json sections = resolve_map_sections(mapName, map, templates, chain);
     std::vector<std::string> stack;
     std::string out = compose_sections(sections, data, 0, stack);
     // 地图 html 片段里的顶层数据孔（{{lang}}/{{title}}/{{body}}/{{extra_head}} 等）
@@ -3416,7 +3471,11 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
         << "    \"blog\": \"map/blog.json\",\n"
         << "    \"blog-post\": \"map/blog-post.json\",\n"
         << "    \"tags\": \"map/tags.json\",\n"
+        << "    \"tag-page\": \"map/tag-page.json\",\n"
         << "    \"404\": \"map/404.json\"\n"
+        << "  },\n"
+        << "  \"templates\": {\n"
+        << "    \"base\": \"map/base.json\"\n"
         << "  }\n"
         << "}\n";
 
