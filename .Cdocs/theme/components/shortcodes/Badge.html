@@ -1,1 +1,37 @@
 <span class="badge badge-{{type}}">{{slot_raw}}</span>
+<style>
+/* Badge 行内徽章：type 配色基于主题变量（color-mix 低透明底），亮/暗自动适配 */
+.badge {
+  display: inline-block;
+  vertical-align: middle;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+}
+.badge-new, .badge-success, .badge-tip {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  background: color-mix(in srgb, var(--success) 9%, var(--card));
+}
+.badge-info {
+  color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 45%, transparent);
+  background: color-mix(in srgb, var(--info) 9%, var(--card));
+}
+.badge-warning {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 9%, var(--card));
+}
+.badge-danger, .badge-important {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--card));
+}
+</style>

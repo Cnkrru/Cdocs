@@ -1045,8 +1045,28 @@ struct ScInst {
     std::string inner;
 };
 static thread_local std::vector<ScInst> g_sc_insts;
+static thread_local std::set<std::string> g_emitted_styles;   // 同文档内组件 <style> 去重（只输出第一份）
 static const char* kScTok = "@@CDOCS_SC_";
 static std::string sc_token(int i) { return std::string(kScTok) + std::to_string(i) + "@@"; }
+
+// 组件 HTML 里可内嵌 <style> 块（样式组件化）。同文档多次使用同一组件时
+// style 只输出一次（CSS 全局生效，位置无关）；结构/script 每处保留。
+static std::string dedup_style_blocks(const std::string& html) {
+    std::string out;
+    out.reserve(html.size());
+    size_t pos = 0;
+    for (;;) {
+        size_t s = html.find("<style", pos);
+        if (s == std::string::npos) { out += html.substr(pos); break; }
+        size_t e = html.find("</style>", s);
+        if (e == std::string::npos) { out += html.substr(pos); break; }  // 未闭合：原样保留
+        out += html.substr(pos, s - pos);
+        std::string block = html.substr(s, e + 8 - s);
+        if (g_emitted_styles.insert(block).second) out += block;
+        pos = e + 8;
+    }
+    return out;
+}
 
 static std::string expand_shortcodes(const std::string& html, bool en);
 
@@ -1244,8 +1264,11 @@ static std::string expand_shortcodes(const std::string& html, bool en) {
 // 正文完整管线（shortcode 预扫描 → md4c → admonitions → shortcode 展开）
 static std::string render_doc_body(const std::string& md, bool en) {
     g_sc_insts.clear();
+    g_emitted_styles.clear();
     std::string md2 = prescan_shortcodes(md);
-    return expand_shortcodes(render_admonitions(markdown_to_html(md2), en), en);
+    // style 去重必须在最终输出做一次（而非组件级）：嵌套组件的 style 嵌在父组件内，
+    // 组件级去重会把父组件内部的子组件 style 误删
+    return dedup_style_blocks(expand_shortcodes(render_admonitions(markdown_to_html(md2), en), en));
 }
 
 static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
