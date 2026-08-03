@@ -3,11 +3,11 @@
     {
       "items": [
         {
-          "file": "docs/getting-started/intro",
+          "file": "getting-started/intro",
           "title": "{{navIntro}}"
         },
         {
-          "file": "docs/getting-started/guide",
+          "file": "getting-started/guide",
           "title": "{{navGuide}}"
         }
       ],
@@ -16,19 +16,19 @@
     {
       "items": [
         {
-          "file": "docs/generator/commands",
+          "file": "generator/commands",
           "title": "{{navCommands}}"
         },
         {
-          "file": "docs/generator/architecture",
+          "file": "generator/architecture",
           "title": "{{navArchitecture}}"
         },
         {
-          "file": "docs/generator/features",
+          "file": "generator/features",
           "title": "{{navFeatures}}"
         },
         {
-          "file": "docs/generator/versioning",
+          "file": "generator/versioning",
           "title": "{{navVersioning}}"
         }
       ],
@@ -37,25 +37,25 @@
     {
       "items": [
         {
-          "file": "docs/reference/api",
+          "file": "reference/api",
           "title": "{{navApi}}"
         },
         {
-          "file": "docs/reference/themes",
+          "file": "reference/themes",
           "title": "{{navThemes}}"
         },
         {
-          "file": "docs/reference/plugins",
+          "file": "reference/plugins",
           "title": "{{navPlugins}}"
         },
         {
           "items": [
             {
-              "file": "docs/generator/pipeline",
+              "file": "generator/pipeline",
               "title": "{{navPipeline}}"
             },
             {
-              "file": "docs/generator/render",
+              "file": "generator/render",
               "title": "{{navRender}}"
             }
           ],
@@ -63,7 +63,7 @@
         },
         {
           "title": "Shortcode 参考",
-          "file": "docs/reference/shortcodes"
+          "file": "reference/shortcodes"
         }
       ],
       "title": "{{navReference}}"
@@ -71,24 +71,24 @@
     {
       "items": [
         {
-          "file": "docs/tests/test-markdown",
+          "file": "tests/test-markdown",
           "title": "{{navTestMarkdown}}"
         },
         {
-          "file": "docs/tests/test-mermaid",
+          "file": "tests/test-mermaid",
           "title": "{{navTestMermaid}}"
         },
         {
-          "file": "docs/tests/test-katex",
+          "file": "tests/test-katex",
           "title": "{{navTestKatex}}"
         },
         {
-          "file": "docs/tests/test-lightbox",
+          "file": "tests/test-lightbox",
           "title": "{{navTestLightbox}}"
         },
         {
           "title": "Shortcodes",
-          "file": "docs/tests/test-shortcodes"
+          "file": "tests/test-shortcodes"
         }
       ],
       "title": "{{navTests}}"

@@ -44,6 +44,7 @@ _cfgp = os.path.join(BASE, '.Cdocs', 'config', 'config.json')
 try:
     _cfg = json.load(open(_cfgp, encoding='utf-8'))
     _cfg.get('site', {}).pop('sidebar', None)
+    _cfg.get('site', {}).pop('route', None)
     json.dump(_cfg, open(_cfgp, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
 except Exception:
     pass

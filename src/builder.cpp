@@ -497,7 +497,7 @@ static void load_site_config(BuildContext& b) {
         warn_unknown(j,   {"site", "head", "header", "center", "footer"}, "$");
         warn_unknown(site, {"title", "description", "theme", "url", "ogImage", "editLink", "i18n",
                             "themeVars", "customCss", "home", "feedback", "versions", "compress",
-                            "jpegQuality", "plugins", "sidebar"}, "site");
+                            "jpegQuality", "plugins", "sidebar", "route"}, "site");
         warn_unknown(hdr, {"logo", "showSearch", "showThemeToggle", "github", "links", "nav"}, "head");
         warn_unknown(ctr, {"plugins", "backToTop", "comments"}, "center");
         warn_unknown(ftr, {"text", "links"}, "footer");
@@ -505,15 +505,21 @@ static void load_site_config(BuildContext& b) {
             std::cerr << color::yellow("  [config] site.compress 应为布尔值（true/false）\n");
         if (site.contains("jpegQuality") && !site["jpegQuality"].is_number())
             std::cerr << color::yellow("  [config] site.jpegQuality 应为数字（1-100）\n");
-        // 侧边栏映射（site.sidebar；兼容顶层 sidebar）：key=版本源目录名或 "blog"，
-        // value=相对 .Cdocs/config/ 的 JSON 路径。每个版本 / 博客区各一份独立侧边栏。
+        // 路由映射（site.route，兼容旧 site.sidebar）：key=版本源目录名或 "blog"，
+        // value=相对 .Cdocs/config/ 的 JSON 路径（route/<name>.json）。每个版本 / 博客区各一份。
         auto read_sidebar_map = [&cfg](const json& obj) {
             if (!obj.is_object()) return;
             for (auto& [k, v] : obj.items())
                 if (v.is_string()) cfg.sidebarMap[k] = v.get<std::string>();
         };
-        read_sidebar_map(site.contains("sidebar") ? site["sidebar"] : json());
-        read_sidebar_map(j.contains("sidebar") ? j["sidebar"] : json());
+        if (site.contains("route") && site["route"].is_object())
+            read_sidebar_map(site["route"]);
+        else if (site.contains("sidebar"))
+            read_sidebar_map(site["sidebar"]);
+        if (j.contains("route") && j["route"].is_object())
+            read_sidebar_map(j["route"]);
+        else if (j.contains("sidebar"))
+            read_sidebar_map(j["sidebar"]);
         } catch (const std::exception& e) {
             // config.json 损坏 / 字段类型错误：不崩溃，用默认配置继续并给出明确提示
             std::cerr << color::error("config.json 解析失败（已用默认配置继续）：") << e.what() << "\n";
@@ -657,7 +663,14 @@ static int prepare_pages(BuildContext& b) {
         // 与文档双区：blog/x.md（默认语言）+ blog/x.<loc>.md（其他语言），按 date 倒序；
         // 无 blog/ 目录 → 单文档站点，行为与旧版完全一致（零回归）。
         std::error_code sec2;
+        // 博客全局共享：优先 in_dir/blog（单版本）；版本化时 in_dir 是 docs 子目录
+        // （md/docs），博客区在上级根 md/blog → 一级回退，各版本共用同一博客
         fs::path blogDir = in_dir / "blog";
+        if (!(fs::exists(blogDir, sec2) && fs::is_directory(blogDir, sec2))) {
+            fs::path rootBlog = in_dir.parent_path() / "blog";
+            if (fs::exists(rootBlog, sec2) && fs::is_directory(rootBlog, sec2))
+                blogDir = rootBlog;
+        }
         if (fs::exists(blogDir, sec2) && fs::is_directory(blogDir, sec2)) {
             for (const auto& e : fs::directory_iterator(blogDir, sec2)) {
                 if (!e.is_regular_file(sec2) || e.path().extension() != ".md") continue;
@@ -1316,6 +1329,14 @@ static void render_locales(BuildContext& b) {
         if (b.query_ready && b.query_out.contains("blog_order") && b.query_out["blog_order"].is_array()
             && !b.query_out["blog_order"].empty()) {
             fs::path blogDir = in_dir / "blog";
+            {
+                std::error_code bec2;
+                if (!(fs::exists(blogDir, bec2) && fs::is_directory(blogDir, bec2))) {
+                    fs::path rootBlog = in_dir.parent_path() / "blog";
+                    if (fs::exists(rootBlog, bec2) && fs::is_directory(rootBlog, bec2))
+                        blogDir = rootBlog;
+                }
+            }
             fs::create_directories(locOut / "blog", ec);
             // 文章渲染顺序由插件 blog_order（有序 file 列表）决定；引擎只做渲染
             std::map<std::string, Page> pgMap;
@@ -1686,7 +1707,7 @@ static void print_summary(BuildContext& b) {
             std::cout << "  - " << color::cyan(p.file + ".html") << color::muted("  (")
                       << i18n_replace(p.title, defDict) << color::muted(")\n");
         }
-        std::cout << color::muted("配置: config.json + sidebar/ | 插件: ");
+        std::cout << color::muted("配置: config.json + route/ | 插件: ");
         for (const auto& p : cfg.plugins) std::cout << color::blue(p) << " ";
         if (cfg.plugins.empty()) std::cout << color::muted("(默认全开)");
         std::cout << (cfg.themeVars.empty() ? std::string("") : color::muted(" | 已注入主题变量")) << "\n";

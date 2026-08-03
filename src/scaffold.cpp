@@ -345,14 +345,21 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
           << "      \"locales\": { \"zh-CN\": { \"label\": \"简体中文\" }, \"en\": { \"label\": \"English\" } }\n"
           << "    },\n"
           << "    \"editLink\": { \"base\": \"\", \"docsDir\": \"md\" },\n"
-          << "    \"sidebar\": {\n";
+          << "    \"route\": {\n";
         if (needDocs)
-            o << "      \"md\": \"sidebar/md.json\",\n";
+            o << (withVersion ? "      \"docs\": \"route/docs.json\",\n"
+                              : "      \"md\": \"route/docs.json\",\n");
         if (withVersion)
-            o << "      \"md-v1\": \"sidebar/v1.json\",\n";
+            o << "      \"docs-v1\": \"route/docs-v1.json\",\n";
         if (needBlog)
-            o << "      \"blog\": \"sidebar/blog.json\"\n";
-        o << "    }\n"
+            o << "      \"blog\": \"route/blog.json\"\n";
+        o << "    }";
+        if (withVersion)
+            o << ",\n    \"versions\": [\n"
+              << "      { \"name\": \"v2\", \"label\": \"2.x\", \"source\": \"md/docs\", \"default\": true },\n"
+              << "      { \"name\": \"v1\", \"label\": \"1.x\", \"source\": \"md/docs-v1\", \"default\": false }\n"
+              << "    ]";
+        o << "\n"
           << "  },\n"
           << "  \"head\": {\n"
           << "    \"logo\": \"\",\n"
@@ -360,7 +367,8 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
           << "    \"showThemeToggle\": true,\n"
           << "    \"nav\": [\n"
           << "      { \"title\": \"{{navHome}}\", \"file\": \"index\" }";
-        if (needDocs) o << ",\n      { \"title\": \"{{navDocs}}\", \"file\": \"docs/intro\" }";
+        if (needDocs) o << ",\n      { \"title\": \"{{navDocs}}\", \"file\": \""
+                         << (withVersion ? "intro" : "docs/intro") << "\" }";
         if (needBlog) o << ",\n      { \"title\": \"{{navBlog}}\", \"file\": \"blog/index\" }";
         o << "\n    ]\n"
           << "  },\n"
@@ -378,24 +386,27 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
     //    （不再生成全局 route.json——侧边栏已按版本/区域拆分，config.json 的 site.sidebar 映射接管）
     {
         std::error_code sec;
-        fs::create_directories(dir / ".Cdocs/config/sidebar", sec);
+        fs::create_directories(dir / ".Cdocs/config/route", sec);
         if (needDocs) {
-            std::ofstream(dir / ".Cdocs/config/sidebar/md.json")
+            // 文档区路由：in_dir = md（单版本）或 md/docs（多版本），file 相对 in_dir 根
+            std::string dIntro = withVersion ? "intro" : "docs/intro";
+            std::string dGuide = withVersion ? "guide" : "docs/guide";
+            std::ofstream(dir / ".Cdocs/config/route/docs.json")
                 << "{\n  \"sidebar\": [\n"
                 << "    {\n      \"title\": \"{{navGettingStarted}}\",\n      \"items\": [\n"
-                << "        { \"title\": \"{{navIntro}}\", \"file\": \"docs/intro\" },\n"
-                << "        { \"title\": \"{{navGuide}}\", \"file\": \"docs/guide\" }\n"
+                << "        { \"title\": \"{{navIntro}}\", \"file\": \"" << dIntro << "\" },\n"
+                << "        { \"title\": \"{{navGuide}}\", \"file\": \"" << dGuide << "\" }\n"
                 << "      ]\n    }\n  ]\n}\n";
             if (withVersion) {
-                std::ofstream(dir / ".Cdocs/config/sidebar/v1.json")
+                std::ofstream(dir / ".Cdocs/config/route/docs-v1.json")
                     << "{\n  \"sidebar\": [\n"
                     << "    {\n      \"title\": \"v1 快照\",\n      \"items\": [\n"
-                    << "        { \"title\": \"v1 示例\", \"file\": \"docs/old-intro\" }\n"
+                    << "        { \"title\": \"v1 示例\", \"file\": \"old-intro\" }\n"
                     << "      ]\n    }\n  ]\n}\n";
             }
         }
         if (needBlog) {
-            std::ofstream(dir / ".Cdocs/config/sidebar/blog.json")
+            std::ofstream(dir / ".Cdocs/config/route/blog.json")
                 << "{\n  \"sidebar\": [\n"
                 << "    {\n      \"title\": \"博客\",\n      \"items\": [\n"
                 << "        { \"title\": \"示例博文\", \"file\": \"blog/hello-cdocs\" }\n"
@@ -524,11 +535,10 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
     }   // end needDocs
 
     if (withVersion) {
-        // 历史版本快照：md-v1/ 示例（结构同 md/：docs/ 子目录；sidebar v1.json 引用 docs/old-intro）
-        fs::create_directories(dir / "md-v1", ec);
-        fs::create_directories(dir / "md-v1" / "docs", ec);
-        std::ofstream(dir / "md-v1/docs/old-intro.md") <<
-            "---\ntitle: v1 快照示例\n---\n\n# v1 版本\n\n这是历史版本（md-v1/）的快照示例。用 `cp -r md md-v1` 可锁定当前版本。\n";
+        // 历史版本快照：md/docs-v1/（文档版本化在 md 内 docs-<v> 目录；v2=md/docs）
+        fs::create_directories(dir / "md" / "docs-v1", ec);
+        std::ofstream(dir / "md/docs-v1/old-intro.md") <<
+            "---\ntitle: v1 快照示例\n---\n\n# v1 版本\n\n这是历史版本（md/docs-v1/）的快照示例。用 `cp -r md/docs md/docs-v1` 可锁定当前版本。\n";
     }
 
     if (needBlog) {
@@ -644,12 +654,12 @@ int cmd_section(const std::string& name) {
             "---\ntitle: 你好，Cdocs\ndate: 2026-01-01\ntags: [cdocs]\n---\n\n# 你好，Cdocs\n\n博客区（md/blog/）第一篇。\n";
         std::ofstream(blogDir / "hello-cdocs.en.md") <<
             "---\ntitle: Hello, Cdocs\ndate: 2026-01-01\ntags: [cdocs]\n---\n\n# Hello, Cdocs\n\nBlog section (`md/blog/`).\n";
-        fs::create_directories(".Cdocs/config/sidebar", ec);
-        std::ofstream(".Cdocs/config/sidebar/blog.json")
+        fs::create_directories(".Cdocs/config/route", ec);
+        std::ofstream(".Cdocs/config/route/blog.json")
             << "{\n  \"sidebar\": [\n    {\n      \"title\": \"博客\",\n      \"items\": [\n"
             << "        { \"title\": \"示例博文\", \"file\": \"blog/hello-cdocs\" }\n"
             << "      ]\n    }\n  ]\n}\n";
-        sbMap["blog"] = "sidebar/blog.json";
+        sbMap["blog"] = "route/blog.json";
         auto& nav = cfg["head"]["nav"];
         bool has = false;
         for (auto& x : nav) if (x.value("file", "") == "blog/index") has = true;
@@ -661,13 +671,13 @@ int cmd_section(const std::string& name) {
         fs::create_directories(docsDir, ec);
         std::ofstream(docsDir / "intro.md") << "# 欢迎\n\n在 `md/docs/` 下写 Markdown。\n";
         std::ofstream(docsDir / "guide.md") << "# 使用指南\n\n文档示例。\n";
-        fs::create_directories(".Cdocs/config/sidebar", ec);
-        std::ofstream(".Cdocs/config/sidebar/md.json")
+        fs::create_directories(".Cdocs/config/route", ec);
+        std::ofstream(".Cdocs/config/route/docs.json")
             << "{\n  \"sidebar\": [\n    {\n      \"title\": \"{{navGettingStarted}}\",\n      \"items\": [\n"
             << "        { \"title\": \"{{navIntro}}\", \"file\": \"docs/intro\" },\n"
             << "        { \"title\": \"{{navGuide}}\", \"file\": \"docs/guide\" }\n"
             << "      ]\n    }\n  ]\n}\n";
-        sbMap["md"] = "sidebar/md.json";
+        sbMap["md"] = "route/docs.json";
         auto& nav = cfg["head"]["nav"];
         bool has = false;
         for (auto& x : nav) if (x.value("file", "") == "docs/intro") has = true;
