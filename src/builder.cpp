@@ -1507,8 +1507,8 @@ static void load_site_config(BuildContext& b) {
             std::string body;
             for (auto it = site["themeVars"].begin(); it != site["themeVars"].end(); ++it)
                 body += "  " + it.key() + ": " + it.value().get<std::string>() + ";\n";
-            cfg.themeVars = "<style id=\"user-theme-vars\">\n:root, [data-theme=\"light\"], [data-theme=\"dark\"] {\n"
-                            + body + "}\n</style>\n";
+            cfg.themeVarsBody = ":root, [data-theme=\"light\"], [data-theme=\"dark\"] {\n" + body + "}";
+            cfg.themeVars = "<style id=\"user-theme-vars\">\n" + cfg.themeVarsBody + "\n</style>\n";
         }
         // 用户自定义 CSS 文件：存在则复制并链接（href 数据供 MetaHead 组件；customCssLink 供 fallback）
         if (site.contains("customCss")) {
@@ -1831,7 +1831,7 @@ static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
         {"jsonld", pcx.jsonld},
         {"extra_head", pcx.extra_head},
         {"show_highlight", opt.showCodeHighlight},
-        {"theme_vars", cfg.themeVars}, {"custom_css_href", cfg.customCssHref},
+        {"theme_vars", cfg.themeVarsBody}, {"custom_css_href", cfg.customCssHref},
         {"header", header_json(cfg, opt, pcx.curLocale, langSwitch, pcx.relBase, isHome)},
         {"nav_groups", pcx.nav_groups},
         {"breadcrumb", pcx.breadcrumb_map},

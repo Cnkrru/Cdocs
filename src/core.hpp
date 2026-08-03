@@ -149,7 +149,8 @@ struct SiteConfig {
     int backToTopThreshold = 300;
     std::string backToTopLabel = "↑ 顶部";
     std::vector<NavNode> nav;           // 来自 route.json（嵌套树）
-    std::string themeVars;              // 注入 <style> 的 CSS 变量覆盖
+    std::string themeVars;              // 注入 <style> 的 CSS 变量覆盖（完整 <style> 标签，fallback 用）
+    std::string themeVarsBody;          // 同上但仅 CSS 内容（MetaVars 组件自己包 <style> 标签，地图模式用）
     std::string customCssHref;          // 用户自定义 CSS 的 href（数据，MetaHead 组件用）
     std::string customCssLink;          // 用户自定义 CSS 的 <link>（fallback 用）
     // 首页（config.home）：hero 可选覆盖 + cards 白名单
