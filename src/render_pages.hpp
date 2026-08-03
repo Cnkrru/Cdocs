@@ -16,6 +16,7 @@ struct LocaleRenderCtx {
     std::string curLocale;     // 当前语言（空 = 单语言）
     std::string homeBase;      // 站点基址前缀（url + 语言）
     std::string feedTitle;     // RSS 标题（i18n 解析后）
+    bool hasFeed = false;      // 站点有订阅流（博客非空）→ head 输出 RSS alternate link
     std::string ogImageUrl;    // 社交分享封面 URL
     json langData;             // 语言切换数据
     fs::path locOut;           // 本语言输出目录

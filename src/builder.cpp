@@ -421,7 +421,8 @@ static void render_one_locale(BuildContext& b, const json& maps, const std::stri
     // canonical/prev/next/hreflang/RSS/manifest → links；OG/Twitter/theme-color → meta；
     // JSON-LD → jsonld 字符串。fallback 仍用 headExtra 字符串（双轨并行）。
     // 每语言渲染上下文（收敛跨函数参数）
-    LocaleRenderCtx rc{maps, dict, i18nJson, curLocale, homeBase, feedTitle, ogImageUrl, langData, locOut};
+    bool hasFeed = !b.blog_posts.empty();   // 有订阅流（博客）→ head 输出 RSS link + 生成 feed
+    LocaleRenderCtx rc{maps, dict, i18nJson, curLocale, homeBase, feedTitle, hasFeed, ogImageUrl, langData, locOut};
 
     // 页面类型渲染（render_pages.cpp）：首页/文档页/博客流/搜索索引/标签聚合/single
     render_home(b, rc);
@@ -432,11 +433,30 @@ static void render_one_locale(BuildContext& b, const json& maps, const std::stri
     render_markets(b, rc);
     render_single(b, rc);
 
-    // 11) RSS / JSON Feed（行业标准，内建，无需 Node；博客文章并入订阅流）
-    {
-        std::vector<Page> allPages = pages;
-        allPages.insert(allPages.end(), b.blog_posts.begin(), b.blog_posts.end());
-        gen_feeds(locOut, loc, allPages, cfg, dict, multi);
+    // 11) RSS / JSON Feed（行业标准，内建，无需 Node；只收博客订阅流，文档页不进）
+    //     增量构建（serve -w 且全局未变）时比对博客集签名，未变则跳过重算（复用旧产物）。
+    if (hasFeed) {
+        std::string sig = feed_sig(b.blog_posts, cfg, loc, multi);
+        fs::path feedSigFile = g_engine / ".build" / ".feeds.sig";
+        bool skip = false;
+        if (b.incremental && !b.globalDirty) {
+            json prev = json::object();
+            if (fs::exists(feedSigFile)) {
+                try { prev = json::parse(read_file(feedSigFile)); } catch (...) {}
+            }
+            skip = (prev.value(loc, std::string()) == sig);
+        }
+        if (!skip) {
+            gen_feeds(locOut, loc, b.blog_posts, cfg, dict, multi);
+            json all = json::object();
+            if (fs::exists(feedSigFile)) {
+                try { all = json::parse(read_file(feedSigFile)); } catch (...) {}
+            }
+            all[loc] = sig;
+            std::error_code sec;
+            fs::create_directories(g_engine / ".build", sec);
+            std::ofstream f(feedSigFile); f << all.dump();
+        }
     }
     // 12) PWA（manifest + service worker + theme-color），内建替代 gen-pwa.js
     gen_pwa(locOut, cfg, feedTitle, theme_root() / "assets");}

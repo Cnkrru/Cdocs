@@ -38,15 +38,13 @@ void write_root_feeds_pwa(BuildContext& b) {
     SiteConfig& cfg = b.cfg;
     I18nCfg& i18n = b.i18n;
     I18nDict& fallbackUI = b.fallbackUI;
-    std::vector<Page>& pages = b.pages;
     const fs::path& out_dir = b.out_dir;
 
     // i18n 站点：在 dist 根额外生成默认语言 feed 与 PWA（供根 index.html 重定向页使用）
     if (i18n.enabled) {
         const I18nDict& dDict = i18n.dicts.count(i18n.defaultLocale) ? i18n.dicts.at(i18n.defaultLocale) : fallbackUI;
-        std::vector<Page> allPages = pages;
-        allPages.insert(allPages.end(), b.blog_posts.begin(), b.blog_posts.end());
-        gen_feeds(out_dir, i18n.defaultLocale, allPages, cfg, dDict, true, /*silent=*/true);
+        if (!b.blog_posts.empty())   // 根 feed 只收博客订阅流；无博客（纯文档站）跳过
+            gen_feeds(out_dir, i18n.defaultLocale, b.blog_posts, cfg, dDict, true, /*silent=*/true);
         gen_pwa(out_dir, cfg, i18n_replace(cfg.title, dDict), theme_root() / "assets");
     }
 }

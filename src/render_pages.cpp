@@ -74,10 +74,11 @@ json build_head_data(BuildContext& b, const LocaleRenderCtx& rc,
         // RSS + PWA manifest + theme-color（RSS/manifest 用 depth 层 ../；hreflang 用 depth+1 层上级语言目录）
         std::string upRss;
         for (int k = 0; k < depth; ++k) upRss += "../";
-        hd["links"].push_back(json{{"rel", "alternate"}, {"href", upRss + "rss.xml"},
-                                   {"attrs", " type=\"application/rss+xml\" title=\"" + esc_attr(rc.feedTitle) + "\""}});
         hd["links"].push_back(json{{"rel", "manifest"}, {"href", upRss + "manifest.webmanifest"}, {"attrs", ""}});
         hd["meta"]["names"].push_back(json{{"name", "theme-color"}, {"content", "#a8332a"}});
+        if (rc.hasFeed)   // 有博客订阅流才输出 RSS alternate（无 feed 时不引 404）
+            hd["links"].push_back(json{{"rel", "alternate"}, {"href", upRss + "rss.xml"},
+                                       {"attrs", " type=\"application/rss+xml\" title=\"" + esc_attr(rc.feedTitle) + "\""}});
         // OG / Twitter（social_head 数据化；摘要去标题前缀）
         std::string d = desc;
         size_t pp = 0;
