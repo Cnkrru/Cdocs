@@ -260,18 +260,6 @@ body {
   -webkit-mask: url(../icons/menu.svg) center / contain no-repeat;
   mask: url(../icons/menu.svg) center / contain no-repeat;
 }
-.locale-switch::before {
-  content: '';
-  display: inline-block;
-  width: 0.95em;
-  height: 0.95em;
-  vertical-align: -0.15em;
-  margin-right: 2px;
-  background: currentColor;
-  opacity: .7;
-  -webkit-mask: url(../icons/languages.svg) center / contain no-repeat;
-  mask: url(../icons/languages.svg) center / contain no-repeat;
-}
 
 /* 编辑此页：铅笔图标 */
 .edit-link a::before {
@@ -848,7 +836,7 @@ body {
 /* 更窄屏：顶栏收紧，搜索框收窄、语言切换只留当前项，避免横向溢出 */
 @media (max-width:560px) {
   .search-box .search-ico {
-    left: 7px;
+    right: 7px;
   }
   /* 移除旧规则：560px 不再隐藏非当前语言项——header 是用户切换语言的主入口，
      缩写后「中/EN」双标签横向占用小（≈60px），与右侧主题按钮并列不溢出 */

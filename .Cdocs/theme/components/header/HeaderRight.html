@@ -3,9 +3,18 @@
 <style>
 .topbar-right {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
   flex: 0 0 auto;
+}
+/* 右侧工具组（语言/版本/主题/GitHub）：与导航用分隔线分组，组内紧凑 */
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
 }
 @media (max-width:800px) {
   .topbar-right {

@@ -94,6 +94,9 @@
               ]
             },
             {
+              "html": "<div class=\"topbar-tools\">\n"
+            },
+            {
               "component": "LangSwitch",
               "if": "header.lang_switch.show",
               "sections": [
@@ -128,6 +131,9 @@
             {
               "component": "GhLink",
               "if": "header.github"
+            },
+            {
+              "html": "</div>\n"
             }
           ]
         }
