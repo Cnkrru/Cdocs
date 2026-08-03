@@ -1,0 +1,19 @@
+<div class="tabs" data-tabs>
+  <div class="tab-list" role="tablist"></div>
+  <div class="tab-panels">{{slot}}</div>
+</div>
+<script>
+(function(){document.querySelectorAll('[data-tabs]').forEach(function(t){
+  var btns=t.querySelector('.tab-list'),pans=t.querySelectorAll('.tab-panel');
+  pans.forEach(function(p,i){var b=document.createElement('button');b.type='button';
+    b.className='tab-btn'+(i===0?' active':'');b.textContent=p.getAttribute('data-label');
+    b.addEventListener('click',function(){
+      btns.querySelectorAll('.tab-btn').forEach(function(x){x.classList.remove('active')});
+      b.classList.add('active');
+      pans.forEach(function(x){x.classList.toggle('active',x===p)});
+    });
+    btns.appendChild(b);
+    if(i===0)p.classList.add('active');
+  });
+})})();
+</script>

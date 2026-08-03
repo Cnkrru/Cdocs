@@ -1,0 +1,20 @@
+<div class="codegroup" data-codegroup>
+  <div class="codegroup-bar"></div>
+  <div class="codegroup-body">{{slot}}</div>
+</div>
+<script>
+(function(){document.querySelectorAll('[data-codegroup]').forEach(function(t){
+  var bar=t.querySelector('.codegroup-bar'),items=t.querySelectorAll('.codeblock');
+  items.forEach(function(p,i){var b=document.createElement('button');b.type='button';
+    b.className='codegroup-btn'+(i===0?' active':'');b.textContent=p.querySelector('.codeblock-label')?
+      p.querySelector('.codeblock-label').textContent:('块 '+(i+1));
+    b.addEventListener('click',function(){
+      bar.querySelectorAll('.codegroup-btn').forEach(function(x){x.classList.remove('active')});
+      b.classList.add('active');
+      items.forEach(function(x){x.classList.toggle('active',x===p)});
+    });
+    bar.appendChild(b);
+    if(i===0)p.classList.add('active');
+  });
+})})();
+</script>

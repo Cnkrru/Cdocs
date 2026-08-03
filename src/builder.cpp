@@ -15,6 +15,7 @@
 #include <thread>      // Hugo 式并发渲染：worker pool
 #include <mutex>       // pageSig 并发写保护
 #include <atomic>      // 任务计数器
+#include <cstdio>
 #include <regex>       // L2 残留检测：{{}} 模板块 / 数据键 / 组件标签正则扫描
 
 // ---------------- 并发渲染 worker pool（Hugo 式：多核并行渲染页面） ----------------
@@ -49,6 +50,11 @@ static fs::path theme_root() {
     return g_engine;
 }
 static std::set<std::string> g_comp_warned;   // 缺失/循环警告去重（每组件名一次）
+static std::mutex g_comp_mtx;                  // g_comp_warned 并发保护（正文渲染多线程）
+static bool comp_warned_once(const std::string& k) {
+    std::lock_guard<std::mutex> lk(g_comp_mtx);
+    return g_comp_warned.insert(k).second;
+}
 
 static fs::path components_dir() { return theme_root() / "components"; }
 
@@ -149,18 +155,18 @@ static std::string render_map_component(const std::string& name, const json& dat
                                         int depth, std::vector<std::string>& stack,
                                         const json* childSections) {
     if (depth > 32) {
-        if (g_comp_warned.insert("depth:" + name).second)
+        if (comp_warned_once("depth:" + name))
             std::cerr << color::warn("警告: ") << "组件嵌套过深（>32 层）: " << name << "\n";
         return {};
     }
     if (std::find(stack.begin(), stack.end(), name) != stack.end()) {
-        if (g_comp_warned.insert("cycle:" + name).second)
+        if (comp_warned_once("cycle:" + name))
             std::cerr << color::warn("警告: ") << "组件循环引用: " << name << "（该挂载点已移除）\n";
         return {};
     }
     std::string body = load_component(name);
     if (body.empty()) {
-        if (g_comp_warned.insert("missing:" + name).second)
+        if (comp_warned_once("missing:" + name))
             std::cerr << color::warn("警告: ") << "组件文件不存在: components/" << name
                       << ".html（该组件已跳过）\n";
         return {};
@@ -239,7 +245,7 @@ static json resolve_map_sections(const std::string& mapName, const json& mapRoot
         return sections;   // 无父级：自身 sections 即最终
     std::string parentName = mapRoot["extends"].get<std::string>();
     if (std::find(chain.begin(), chain.end(), parentName) != chain.end()) {
-        if (g_comp_warned.insert("extends:" + parentName).second) {
+        if (comp_warned_once("extends:" + parentName)) {
             std::cerr << color::warn("警告: ") << "地图继承循环: ";
             for (const auto& c : chain) std::cerr << c << " → ";
             std::cerr << parentName << "（子地图 sections 独立使用）\n";
@@ -251,14 +257,14 @@ static json resolve_map_sections(const std::string& mapName, const json& mapRoot
         pp = theme_root() / templates[parentName].get<std::string>();
     std::error_code ec;
     if (!fs::is_regular_file(pp, ec)) {
-        if (g_comp_warned.insert("extends:" + parentName).second)
+        if (comp_warned_once("extends:" + parentName))
             std::cerr << color::warn("警告: ") << "父级地图不存在: " << pp
                       << "（子地图 sections 独立使用）\n";
         return sections;
     }
     json parent;
     try { parent = json::parse(read_file(pp)); } catch (...) {
-        if (g_comp_warned.insert("extends:" + parentName).second)
+        if (comp_warned_once("extends:" + parentName))
             std::cerr << color::warn("警告: ") << "父级地图 JSON 解析失败: " << pp << "\n";
         return sections;
     }
@@ -275,7 +281,7 @@ static json resolve_map_sections(const std::string& mapName, const json& mapRoot
             filled = true;
         } else merged.push_back(sec);
     }
-    if (!filled && g_comp_warned.insert("slot:" + mapName).second)
+    if (!filled && comp_warned_once("slot:" + mapName))
         std::cerr << color::warn("警告: ") << "父级地图 " << parentName
                   << " 没有 {\"slot\": ...} 槽位，子地图内容未注入\n";
     return merged;
@@ -311,7 +317,7 @@ static std::string compose_page(const std::string& mapName, const json& data) {
                                   : (theme_root() / mapPath);
     std::error_code ec;
     if (!fs::is_regular_file(mp, ec)) {
-        if (g_comp_warned.insert("map:" + mapName).second)
+        if (comp_warned_once("map:" + mapName))
             std::cerr << color::warn("警告: ") << "页面地图不存在: " << mp
                       << "（使用内置最小骨架兜底）\n";
         std::string out = "<!DOCTYPE html>\n<html lang=\"" + esc_attr(data.value("lang", "zh-CN"))
@@ -320,7 +326,7 @@ static std::string compose_page(const std::string& mapName, const json& data) {
     }
     json map;
     try { map = json::parse(read_file(mp)); } catch (...) {
-        if (g_comp_warned.insert("map:" + mapName).second)
+        if (comp_warned_once("map:" + mapName))
             std::cerr << color::warn("警告: ") << "页面地图 JSON 解析失败: " << mp << "\n";
         return {};
     }
@@ -997,8 +1003,11 @@ static int prepare_pages(BuildContext& b) {
 // 优先级：props > 地图 data > 站点 data > 内置引擎键。
 static json g_site_data;
 static bool g_site_data_loaded = false;
+static std::mutex g_site_data_mtx;   // site_data 并发保护（正文渲染多线程首次加载竞争）
 static const json& site_data() {
     if (g_site_data_loaded) return g_site_data;
+    std::lock_guard<std::mutex> lk(g_site_data_mtx);
+    if (g_site_data_loaded) return g_site_data;   // 双检锁
     g_site_data_loaded = true;
     std::error_code ec;
     fs::path d = g_engine / "data";
@@ -1016,11 +1025,227 @@ static const json& site_data() {
             if (j.is_object())
                 for (auto it = j.begin(); it != j.end(); ++it) g_site_data[it.key()] = it.value();
         } catch (...) {
-            if (g_comp_warned.insert("data:" + f.string()).second)
+            if (comp_warned_once("data:" + f.string()))
                 std::cerr << color::warn("警告: ") << "站点数据文件解析失败: " << f << "\n";
         }
     }
     return g_site_data;
+}
+
+// ============ 正文 Shortcodes（v7）：<PascalCase/> 标签内容组件 ============
+// 语法：<Name/> 自闭合；<Name k="v">…</Name> 带参+包裹（子内容为 Markdown，可嵌套）；
+//       首字母大写 = shortcode（与原生 HTML 小写标签天然隔离）；\<Name> 转义为字面量（L3）。
+// 管线：prescan_shortcodes(md) 在 md4c 之前把 shortcode 替换为占位 token（跳过代码围栏/行内代码/转义），
+//       markdown_to_html + render_admonitions 渲染正文后，expand_shortcodes(html) 把 token 替换为
+//       组件渲染结果（innerMd 递归走同一管线 → {{slot}}；参数 → props；{{slot_raw}} = 转义原文）。
+// 实例表 thread_local：正文渲染多线程并发（render_content 阶段 1），每文档独立生命周期。
+struct ScInst {
+    std::string name;
+    json props;
+    std::string inner;
+};
+static thread_local std::vector<ScInst> g_sc_insts;
+static const char* kScTok = "@@CDOCS_SC_";
+static std::string sc_token(int i) { return std::string(kScTok) + std::to_string(i) + "@@"; }
+
+static std::string expand_shortcodes(const std::string& html, bool en);
+
+// 预扫描：md 原文 → shortcode 替换为占位 token；跳过 fenced code / inline code；\<Name> → &lt;Name&gt;
+static std::string prescan_shortcodes(const std::string& md) {
+    std::string out;
+    out.reserve(md.size() + 64);
+    const size_t n = md.size();
+    size_t i = 0;
+    bool inFence = false;
+    char fenceCh = 0;
+    size_t fenceLen = 0;
+    while (i < n) {
+        // fenced code 检测（行首 ``` 或 ~~~）
+        if (!inFence && (i == 0 || md[i - 1] == '\n') && (md[i] == '`' || md[i] == '~')) {
+            size_t j = i, cnt = 0;
+            while (j < n && md[j] == md[i]) { ++cnt; ++j; }
+            if (cnt >= 3) {
+                inFence = true; fenceCh = md[i]; fenceLen = cnt;
+                out += md.substr(i, j - i);
+                i = j;
+                continue;
+            }
+        }
+        if (inFence) {
+            size_t nl = md.find('\n', i);
+            size_t segEnd = (nl == std::string::npos) ? n : nl + 1;
+            std::string line = md.substr(i, segEnd - i);
+            size_t ls = 0;
+            while (ls < line.size() && (line[ls] == ' ' || line[ls] == '\t')) ++ls;
+            size_t cnt = 0;
+            while (ls + cnt < line.size() && line[ls + cnt] == fenceCh) ++cnt;
+            if (cnt >= fenceLen) inFence = false;
+            out += line;
+            i = segEnd;
+            continue;
+        }
+        // L3 转义：\<Tabs> → &amp;lt;Tabs&amp;gt;（字面量，不再解析）
+        // 注意：反斜杠后是 '<' + 大写字母（标签形态）；\<Tabs> 的 \ 后是 < 不是大写，旧判断永不触发
+        if (md[i] == '\\' && i + 1 < n && md[i + 1] == '<'
+            && i + 2 < n && isupper((unsigned char)md[i + 2])) {
+            size_t gt = md.find('>', i + 2);
+            if (gt != std::string::npos) {
+                // 整个标签转义：&amp;lt;Tabs&amp;gt; → md4c 解码 &amp; → & → 浏览器显示 <Tabs> 字面量
+                out += "&amp;lt;" + md.substr(i + 2, gt - i - 2) + "&amp;gt;";
+                i = gt + 1;
+                continue;
+            }
+            out += "&amp;lt;";
+            i += 2;
+            continue;
+        }
+        // inline code：`...` 跨度跳过（内容里的标签不解析）
+        if (md[i] == '`') {
+            size_t j = i, cnt = 0;
+            while (j < n && md[j] == '`') { ++cnt; ++j; }
+            size_t close = md.find(std::string(cnt, '`'), j);
+            if (close != std::string::npos) {
+                out += md.substr(i, close + cnt - i);
+                i = close + cnt;
+                continue;
+            }
+            out += md[i]; ++i;
+            continue;
+        }
+        // shortcode 开标签：<大写字母
+        if (md[i] == '<' && i + 1 < n && isupper((unsigned char)md[i + 1])) {
+            size_t j = i + 1;
+            while (j < n && isalnum((unsigned char)md[j])) ++j;
+            std::string name = md.substr(i + 1, j - i - 1);
+            if (!name.empty()) {
+                size_t k = j;
+                json props;
+                bool selfClose = false, ok = true;
+                while (k < n) {
+                    while (k < n && (md[k] == ' ' || md[k] == '\t' || md[k] == '\n' || md[k] == '\r')) ++k;
+                    if (k >= n) { ok = false; break; }
+                    if (md[k] == '/' && k + 1 < n && md[k + 1] == '>') { selfClose = true; k += 2; break; }
+                    if (md[k] == '>') { ++k; break; }
+                    size_t a0 = k;
+                    while (k < n && (isalnum((unsigned char)md[k]) || md[k] == '-' || md[k] == '_')) ++k;
+                    std::string aname = md.substr(a0, k - a0);
+                    while (k < n && (md[k] == ' ' || md[k] == '\t')) ++k;
+                    if (k < n && md[k] == '=') {
+                        ++k;
+                        while (k < n && (md[k] == ' ' || md[k] == '\t')) ++k;
+                        std::string aval;
+                        if (k < n && (md[k] == '"' || md[k] == '\'')) {
+                            char q = md[k]; ++k;
+                            size_t v0 = k;
+                            while (k < n && md[k] != q) ++k;
+                            aval = md.substr(v0, k - v0);
+                            if (k < n) ++k;
+                        } else {
+                            size_t v0 = k;
+                            while (k < n && md[k] != ' ' && md[k] != '\t' && md[k] != '\n' && md[k] != '\r' && md[k] != '>' && md[k] != '/') ++k;
+                            aval = md.substr(v0, k - v0);
+                        }
+                        if (!aname.empty()) props[aname] = aval;
+                    } else if (!aname.empty()) {
+                        props[aname] = true;
+                    }
+                    if (aname.empty()) { ok = false; break; }
+                }
+                if (ok) {
+                    if (selfClose) {
+                        int idx = (int)g_sc_insts.size();
+                        g_sc_insts.push_back({name, props, ""});
+                        out += sc_token(idx);
+                        i = k;
+                        continue;
+                    }
+                    std::string closeTag = "</" + name + ">";
+                    size_t close = md.find(closeTag, k);
+                    if (close != std::string::npos) {
+                        std::string inner = md.substr(k, close - k);
+                        int idx = (int)g_sc_insts.size();
+                        g_sc_insts.push_back({name, props, inner});
+                        out += sc_token(idx);
+                        i = close + closeTag.size();
+                        continue;
+                    }
+                    if (comp_warned_once("scopen:" + name))
+                        std::cerr << color::warn("警告: ") << "shortcode 未闭合: <" << name << ">（原样保留）\n";
+                    out += md.substr(i, k - i);
+                    i = k;
+                    continue;
+                }
+            }
+        }
+        out += md[i];
+        ++i;
+    }
+    return out;
+}
+
+// 渲染单个 shortcode 实例：innerMd 递归完整管线 → {{slot}}；参数 → props；{{slot_raw}} = 转义原文
+static std::string render_shortcode(int idx, bool en) {
+    if (idx < 0 || idx >= (int)g_sc_insts.size()) return {};
+    ScInst inst = g_sc_insts[idx];   // 值拷贝：prescan 内部 push_back 扩容时本地副本不受影响（防悬垂引用）
+    std::string body = load_component(inst.name);
+    if (body.empty()) {
+        if (comp_warned_once("sc:" + inst.name))
+            std::cerr << color::warn("警告: ") << "shortcode 组件不存在: components/" << inst.name
+                      << ".html（正文原样保留）\n";
+        return "<" + inst.name + ">";
+    }
+    std::string innerHtml;
+    if (!inst.inner.empty()) {
+        std::string md2 = prescan_shortcodes(inst.inner);
+        std::string h1 = markdown_to_html(md2);
+        std::string h2 = render_admonitions(h1, en);
+        innerHtml = expand_shortcodes(h2, en);
+    }
+    json ctx = inst.props;
+    ctx["slot"] = innerHtml;
+    ctx["slot_raw"] = esc(inst.inner);
+    const json& sd = site_data();
+    for (auto it = sd.cbegin(); it != sd.cend(); ++it)
+        if (!ctx.contains(it.key())) ctx[it.key()] = it.value();
+    std::string res = fill_data_holes(body, ctx);
+    return res;
+}
+
+// 渲染后：占位 token → 组件渲染结果（嵌套深度上限 16）
+static std::string expand_shortcodes(const std::string& html, bool en) {
+    std::string out;
+    out.reserve(html.size() + 256);
+    const size_t n = html.size();
+    size_t i = 0;
+    int depth = 0;
+    const size_t tokLen = std::strlen(kScTok);
+    while (i < n) {
+        if (html.compare(i, tokLen, kScTok) == 0) {
+            size_t e0 = i + tokLen;
+            size_t e1 = html.find("@@", e0);
+            if (e1 != std::string::npos) {
+                int idx = -1;
+                try { idx = std::stoi(html.substr(e0, e1 - e0)); } catch (...) {}
+                if (idx >= 0 && depth < 16) {
+                    ++depth;
+                    out += render_shortcode(idx, en);
+                    --depth;
+                    i = e1 + 2;
+                    continue;
+                }
+            }
+        }
+        out += html[i];
+        ++i;
+    }
+    return out;
+}
+
+// 正文完整管线（shortcode 预扫描 → md4c → admonitions → shortcode 展开）
+static std::string render_doc_body(const std::string& md, bool en) {
+    g_sc_insts.clear();
+    std::string md2 = prescan_shortcodes(md);
+    return expand_shortcodes(render_admonitions(markdown_to_html(md2), en), en);
 }
 
 static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
@@ -1432,7 +1657,7 @@ static void render_locales(BuildContext& b) {
             if (!pages[i].dateT) pages[i].dateT = file_mtime_t(f);
             std::string md;
             FrontMatter fm = parse_front_matter(mdRaw, md);   // 剥离 front matter，取到正文与元数据
-            pages[i].html  = render_admonitions(markdown_to_html(md), curLocale == "en");
+            pages[i].html  = render_doc_body(md, curLocale == "en");
             if (pages[i].title.empty()) pages[i].title = extract_title(md, pages[i].file);
             pages[i].lastmod  = fm.lastmod;
             pages[i].aliases  = fm.aliases;
@@ -1580,7 +1805,7 @@ static void render_locales(BuildContext& b) {
                 std::string mdRaw = read_file(f);
                 std::string md;
                 parse_front_matter(mdRaw, md);
-                p.html = render_admonitions(markdown_to_html(md), false);   // blog 正文跨语言共享，用默认中文标题
+                p.html = render_doc_body(md, false);   // blog 正文跨语言共享，用默认中文标题
                 if (p.title.empty()) p.title = extract_title(md, rel);
                 std::string excerpt = collapse_ws(strip_tags(p.html));
                 if (excerpt.size() > 160) excerpt = truncate_utf8(excerpt, 160) + "…";
