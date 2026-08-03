@@ -147,6 +147,12 @@ SCRIPT = """
   function init() {
     var footer = document.querySelector(".site-footer .footer-inner");
     if (!footer) return;
+    var tools = document.querySelector(".footer-tools");
+    if (!tools) {   // footer.js 未运行（异常兜底）时自建容器，保证按钮入组
+      tools = document.createElement("div");
+      tools.className = "footer-tools";
+      footer.appendChild(tools);
+    }
     var b = document.createElement("button");
     b.type = "button"; b.className = "bsz-btn"; b.title = I.title;
     b.innerHTML =
@@ -154,7 +160,7 @@ SCRIPT = """
       '<path fill="currentColor" d="M4 13h2v7H4zm6-9h2v16h-2zm6 6h2v10h-2z"/></svg>' +
       '<span>' + I.btn + '</span>';
     b.addEventListener("click", openPanel);
-    footer.appendChild(b);
+    tools.insertBefore(b, tools.firstChild);   // 统计按钮放到 RSS 左侧
   }
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", init);
