@@ -53,8 +53,23 @@
     "compress": true,
     "sidebar": {
       "md": "sidebar/md.json",
-      "blog": "sidebar/blog.json"
-    }
+      "blog": "sidebar/blog.json",
+      "md-v1": "sidebar/md-v1.json"
+    },
+    "versions": [
+      {
+        "name": "v2",
+        "label": "2.x",
+        "source": "md",
+        "default": true
+      },
+      {
+        "name": "v1",
+        "label": "1.x",
+        "source": "md-v1",
+        "default": false
+      }
+    ]
   },
   "head": {
     "logo": "{{brand}}",

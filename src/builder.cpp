@@ -14,6 +14,7 @@
 #include "compress.hpp"
 #include "linkcheck.hpp"
 #include <algorithm>   // std::find（i18n 缺失键去重）
+#include <set>         // 版本化导航过滤（当前版本已生成页面集合）
 #include <thread>      // Hugo 式并发渲染：worker pool
 #include <mutex>       // pageSig 并发写保护
 #include <atomic>      // 任务计数器
@@ -807,6 +808,22 @@ static std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
 
 // 3) 多语言构建循环：每个语言输出到独立子目录（未开启 i18n 时单语言输出到根）
 static void render_locales(BuildContext& b) {
+    // 版本化适配：head.nav 指向当前版本不存在的页面时剔除（历史版快照内容不完整——
+    // 多版本共用一个 config，旧版本没有新页面属正常；避免死链导航）。单版本零影响。
+    {
+        std::set<std::string> files;
+        for (const auto& p : b.pages) files.insert(p.file);
+        bool hasBlog = b.query_ready && b.query_out.contains("blog_order")
+                       && b.query_out["blog_order"].is_array()
+                       && !b.query_out["blog_order"].empty();
+        std::vector<Link> keep;
+        for (const auto& l : b.cfg.header.nav) {
+            if (l.file.empty()) { keep.push_back(l); continue; }
+            if (l.file == "blog/index") { if (hasBlog) keep.push_back(l); continue; }
+            if (files.count(l.file)) keep.push_back(l);
+        }
+        b.cfg.header.nav = std::move(keep);
+    }
     // v4 地图驱动必需：theme/map/ 目录（否则无法拼接页面）
     std::error_code mec;
     if (!fs::is_directory(theme_root() / "map", mec)) {
