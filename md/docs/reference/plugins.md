@@ -36,9 +36,31 @@
 | --- | --- | --- |
 | `on_config` | 配置加载后 | `engine` / `source` / `dest` |
 | `on_page_collected` | 页面收集完成后 | `count`、`pages[]`（file/title/draft/tags） |
+| `on_data_query` | **全部页面收集后、渲染前** | `count`、`pages[]`（file/title/date/dateT_iso/tags/weight/draft） |
 | `on_page_rendered` | **每页**写盘后 | `file` / `locale` / `path`（绝对路径） |
 | `on_done` | 全部产物生成后 | `engine` / `source` / `dest` |
 | `setup` | `Cdocs deploy --setup` | `source`（**项目根**，非源目录）/ `engine` |
+
+`on_data_query` 是**数据查询钩子**——引擎把全部页面（文档 + 博客）的元数据快照交给插件，插件做聚合/排序/分页后把结果写回 out.json，引擎用插件结果渲染页面。**查询逻辑 100% 由插件实现，引擎不内置任何查询**（博客流排序、标签聚合、首页文章流均由此驱动）。输出约定：
+
+```json
+{
+  "ok": true,
+  "blog_order": ["blog/hello", "blog/world"],
+  "blog_pages": [["blog/hello"], ["blog/world"]],
+  "home_posts": ["blog/hello"],
+  "tags": [{"name": "C++", "href": "c.html"}],
+  "tag_pages": {"C++": ["blog/hello", "docs/intro"]}
+}
+```
+
+- `blog_order`：博客文章渲染顺序（有序 file 列表，决定文章页与上下篇）
+- `blog_pages`：列表页分页（每页一个 file 数组；引擎据此生成 blog/index.html + blog/page/N.html）
+- `home_posts`：首页文章流（取哪些、取几条由插件定）
+- `tags` / `tag_pages`：标签总览 + 每标签文章列表（file 以 `blog/` 前缀区分博客）
+- 插件**无输出或输出为空** → 对应页面不生成（纯文档站行为）
+
+引擎内置两个查询插件：`blog-query`（博客流排序/分页/首页流）、`tags-query`（标签聚合），`Cdocs init` / `Cdocs add blog` 时自动生成到 `.Cdocs/plugins/`。改脚本 = 自定义查询（每页条数、排序规则、首页条数、标签排序都能改）。
 
 `setup` 钩子是**非构建期**钩子，仅由 `Cdocs deploy --setup` 触发——用于生成平台部署配置（`.github/workflows/*.yml`、`vercel.json` 等），插件以 `ctx.source`（项目根）为基准写文件，幂等（内容一致则跳过）。引擎内置两个部署插件：`github-pages`、`vercel`。
 

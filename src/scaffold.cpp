@@ -7,6 +7,133 @@
 #include <sstream>
 #include <cctype>
 
+// ---- 数据查询插件（Python）：博客流 + 标签聚合 ----
+// 数据查询必须走插件（引擎不内置查询逻辑）；init/add 博客区时自动生成到 .Cdocs/plugins/。
+static const char* kBlogQueryJson = R"J({
+  "name": "blog-query",
+  "description": "博客流查询插件：筛选 blog/* 文章，按 date 倒序，输出分页与首页流（on_data_query 钩子）。",
+  "version": "1.0.0",
+  "hooks": {
+    "on_data_query": {
+      "cmd": "python scripts/blog_query.py",
+      "timeout": 15
+    }
+  }
+}
+)J";
+static const char* kBlogQueryPy = R"PY(#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""blog-query: 博客流查询（on_data_query 钩子）。引擎只产数据快照，本文档决定取哪些/顺序/分页。"""
+import json
+import sys
+
+PER_PAGE = 10      # 列表页每篇数
+HOME_TOP = 8       # 首页文章流条数
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("usage: blog_query.py <ctx.json> <out.json>", file=sys.stderr)
+        sys.exit(1)
+    with open(sys.argv[1], encoding='utf-8') as f:
+        ctx = json.load(f)
+    posts = [p for p in ctx.get("pages", [])
+             if p.get("file", "").startswith("blog/") and not p.get("draft")]
+    posts.sort(key=lambda p: (p.get("dateT_iso") or "", p.get("date") or "", p.get("file") or ""),
+               reverse=True)
+    order = [p["file"] for p in posts]
+    out = {"ok": True}
+    out["blog_order"] = order
+    out["blog_pages"] = [order[i:i + PER_PAGE] for i in range(0, len(order), PER_PAGE)]
+    out["home_posts"] = order[:HOME_TOP]
+    with open(sys.argv[2], 'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+
+
+if __name__ == "__main__":
+    main()
+)PY";
+static const char* kTagsQueryJson = R"J({
+  "name": "tags-query",
+  "description": "标签聚合查询插件：聚合文档+博客的 frontmatter tags，输出标签总览与每标签文章列表（on_data_query 钩子）。",
+  "version": "1.0.0",
+  "hooks": {
+    "on_data_query": {
+      "cmd": "python scripts/tags_query.py",
+      "timeout": 15
+    }
+  }
+}
+)J";
+static const char* kTagsQueryPy = R"PY(#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""tags-query: 标签聚合查询（on_data_query 钩子）。聚合全部文章 tags，输出总览 + 每标签列表。"""
+import json
+import sys
+
+
+def slugify(s):
+    out = []
+    for ch in s:
+        o = ord(ch)
+        if o >= 0x80:
+            out.append(ch)
+        elif 'a' <= ch <= 'z' or '0' <= ch <= '9':
+            out.append(ch)
+        elif 'A' <= ch <= 'Z':
+            out.append(ch.lower())
+        elif ch in ' -_/':
+            out.append('-')
+    res = []
+    prev = ''
+    for ch in out:
+        if ch == '-' and prev == '-':
+            continue
+        res.append(ch)
+        prev = ch
+    return ''.join(res).strip('-')
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("usage: tags_query.py <ctx.json> <out.json>", file=sys.stderr)
+        sys.exit(1)
+    with open(sys.argv[1], encoding='utf-8') as f:
+        ctx = json.load(f)
+    pages = [p for p in ctx.get("pages", []) if not p.get("draft")]
+    by_file = {p["file"]: p for p in pages}
+    tag_map = {}
+    for p in pages:
+        for t in p.get("tags", []):
+            tag_map.setdefault(t, []).append(p["file"])
+    out = {"ok": True}
+    out["tags"] = [{"name": k, "href": slugify(k) + ".html"} for k in sorted(tag_map)]
+    out["tag_pages"] = {}
+    for name, files in tag_map.items():
+        blog = sorted((f for f in files if f.startswith("blog/")),
+                      key=lambda f: by_file.get(f, {}).get("dateT_iso") or "",
+                      reverse=True)
+        docs = [f for f in files if not f.startswith("blog/")]
+        out["tag_pages"][name] = blog + docs
+    with open(sys.argv[2], 'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+
+
+if __name__ == "__main__":
+    main()
+)PY";
+
+// 写入查询插件到站点（init/add 博客区时调用；幂等，可重复执行）
+static void write_query_plugins(const fs::path& dir) {
+    std::error_code ec;
+    fs::create_directories(dir / ".Cdocs/plugins/blog-query/scripts", ec);
+    fs::create_directories(dir / ".Cdocs/plugins/tags-query/scripts", ec);
+    { std::ofstream f(dir / ".Cdocs/plugins/blog-query/plugin.json"); f << kBlogQueryJson; }
+    { std::ofstream f(dir / ".Cdocs/plugins/blog-query/scripts/blog_query.py"); f << kBlogQueryPy; }
+    { std::ofstream f(dir / ".Cdocs/plugins/tags-query/plugin.json"); f << kTagsQueryJson; }
+    { std::ofstream f(dir / ".Cdocs/plugins/tags-query/scripts/tags_query.py"); f << kTagsQueryPy; }
+}
+
 static const char* kZhCN = R"CDOCS({
   "siteTitle": "Cdocs 文档",
   "siteDesc": "一个用 C++ 编写、复用成熟组件（md4c + nlohmann/json + FlexSearch）的极简静态文档站点生成器。",
@@ -273,6 +400,8 @@ int cmd_init(fs::path dir, bool copyExe, bool useDefaults) {
                 << "    {\n      \"title\": \"博客\",\n      \"items\": [\n"
                 << "        { \"title\": \"示例博文\", \"file\": \"blog/hello-cdocs\" }\n"
                 << "      ]\n    }\n  ]\n}\n";
+            // 博客数据查询必须走插件：同步生成内置查询插件（blog-query/tags-query）
+            write_query_plugins(dir);
         }
     }
 
@@ -525,6 +654,8 @@ int cmd_section(const std::string& name) {
         bool has = false;
         for (auto& x : nav) if (x.value("file", "") == "blog/index") has = true;
         if (!has) nav.push_back({{"title", "{{navBlog}}"}, {"file", "blog/index"}});
+        // 博客数据查询必须走插件：同步生成内置查询插件（blog-query/tags-query）
+        write_query_plugins(".");
         std::cout << color::green("已创建博客区: ") << blogDir << "\n";
     } else if (isDocs) {
         fs::create_directories(docsDir, ec);

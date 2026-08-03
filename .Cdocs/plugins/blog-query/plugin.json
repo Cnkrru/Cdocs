@@ -1,0 +1,11 @@
+{
+  "name": "blog-query",
+  "description": "博客流查询插件：从数据快照筛选 blog/* 文章，按 date 倒序排序，输出分页与首页流（on_data_query 钩子）。查询逻辑全在 Python，引擎不硬编码。",
+  "version": "1.0.0",
+  "hooks": {
+    "on_data_query": {
+      "cmd": "python scripts/blog_query.py",
+      "timeout": 15
+    }
+  }
+}

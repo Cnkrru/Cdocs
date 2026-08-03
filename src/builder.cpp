@@ -265,6 +265,8 @@ struct BuildContext {
     std::vector<Page> pages;
     std::vector<Page> blog_posts;          // 博客流：md/blog/ 收集的文章（按 date 倒序）
     std::vector<NavNode> blogNav;          // 博客区独立侧边栏（config.sidebar["blog"]；空 = 沿用文档导航）
+    json query_out;                        // on_data_query 插件输出：blog_order / blog_pages / home_posts / tags / tag_pages
+    bool query_ready = false;              // 插件已产出查询结果（false = 无查询 → 纯文档站，无博客/标签功能）
     // ---- 增量构建状态（--watch 热重载加速；普通 build 全量） ----
     bool incremental = false;              // 本次构建是否启用增量（serve -w 置位）
     std::map<std::string, std::string> pageSig;  // file+loc -> "mtime:size"（源 .md 指纹）
@@ -647,14 +649,7 @@ static int prepare_pages(BuildContext& b) {
         }
         if (!includeDrafts) filter_draft_nav(cfg.nav, draftFiles);
         // 若有页面带 tags，在导航末尾追加“标签”入口，指向标签总览页
-        bool hasTags = false;
-        for (auto& pg : pages) if (!pg.draft && !pg.tags.empty()) { hasTags = true; break; }
-        if (hasTags) {
-            NavNode tagLink;
-            tagLink.title = "标签";
-            tagLink.url = "tags/index.html";
-            cfg.nav.push_back(tagLink);
-        }
+        // 标签/博客导航入口由 on_data_query 插件查询结果驱动（prepare_pages 末尾补加）
         // 博客流（约定优于配置）：md/blog/ 目录存在 → 收集为博客文章。
         // 与文档双区：blog/x.md（默认语言）+ blog/x.<loc>.md（其他语言），按 date 倒序；
         // 无 blog/ 目录 → 单文档站点，行为与旧版完全一致（零回归）。
@@ -679,14 +674,60 @@ static int prepare_pages(BuildContext& b) {
                 if (!pg.dateT) pg.dateT = file_mtime_t(e.path());
                 b.blog_posts.push_back(std::move(pg));
             }
-            std::sort(b.blog_posts.begin(), b.blog_posts.end(),
-                      [](const Page& a, const Page& b) { return a.dateT > b.dateT; });
-            if (!b.blog_posts.empty()) {
-                NavNode blogLink;
-                blogLink.title = "{{navBlog}}";
-                blogLink.url = "blog/index.html";
-                cfg.nav.push_back(blogLink);
+            // 博客排序/筛选/导航由 on_data_query 插件查询结果驱动（prepare_pages 末尾补加）；
+            // 此处只做原始收集（目录扫描 + frontmatter 解析），不排序。
+        }
+    }
+    // 数据查询钩子：构建全部页面数据快照 → on_data_query 插件（Python 脚本聚合/排序/分页）。
+    // 引擎只产原始数据（收集/解析/渲染），查询逻辑 100% 由插件实现；
+    // 插件无输出或输出为空 = 纯文档站（无博客流/无标签页/首页无文章列表）。
+    {
+        json snap = json::array();
+        auto push_snap = [&](const std::vector<Page>& v) {
+            for (const auto& p : v) {
+                snap.push_back(json{{"file", p.file}, {"title", p.title},
+                                    {"date", p.date}, {"dateT_iso", iso8601(p.dateT)},
+                                    {"tags", p.tags}, {"weight", p.weight},
+                                    {"draft", p.draft}});
             }
+        };
+        push_snap(b.pages);
+        push_snap(b.blog_posts);
+        std::vector<json> outs;
+        run_plugin_hooks("on_data_query", json{
+            {"source", fs::absolute(b.in_dir).string()},
+            {"dest",   fs::absolute(b.out_dir).string()},
+            {"engine", fs::absolute(g_engine).string()},
+            {"count",  b.pages.size() + b.blog_posts.size()},
+            {"pages",  snap}
+        }, &outs);
+        for (const auto& o : outs) {
+            if (!o.is_object()) continue;
+            for (auto it = o.begin(); it != o.end(); ++it) {
+                if (it.key() == "ok" || it.key() == "message") continue;
+                b.query_out[it.key()] = it.value();
+            }
+            b.query_ready = true;
+        }
+        // 导航入口由查询结果驱动（有博客流 → 博客链接；有标签 → 标签链接）
+        auto has_nav = [&](const std::string& url) {
+            for (const auto& n : b.cfg.nav)
+                if (!n.url.empty() && n.url.find(url) != std::string::npos) return true;
+            return false;
+        };
+        if (b.query_out.contains("blog_order") && b.query_out["blog_order"].is_array()
+            && !b.query_out["blog_order"].empty() && !has_nav("blog/index.html")) {
+            NavNode blogLink;
+            blogLink.title = "{{navBlog}}";
+            blogLink.url = "blog/index.html";
+            b.cfg.nav.push_back(blogLink);
+        }
+        if (b.query_out.contains("tags") && b.query_out["tags"].is_array()
+            && !b.query_out["tags"].empty() && !has_nav("tags/index.html")) {
+            NavNode tagLink;
+            tagLink.title = "标签";
+            tagLink.url = "tags/index.html";
+            b.cfg.nav.push_back(tagLink);
         }
     }
     return 0;   // 到达此处即收集成功
@@ -1039,19 +1080,22 @@ static void render_locales(BuildContext& b) {
                 ctx.hero["cta_text"] = ctaText;
             }
             ctx.cards = cards_json(cfg, pages);
-            // 博客流注入首页（paper 等博客主题的 home 直接 each blog_posts 渲染文章流；
-            // 键齐全避免 {{date}} 等原样残留；desc 留空——首页列表可只要日期+标题）
-            if (!b.blog_posts.empty()) {
+            // 博客流注入首页（插件 home_posts 决定取哪些；引擎只做渲染数据映射）
+            if (b.query_ready && b.query_out.contains("home_posts") && b.query_out["home_posts"].is_array()
+                && !b.query_out["home_posts"].empty()) {
                 json posts = json::array();
-                size_t n = std::min<size_t>(8, b.blog_posts.size());
-                for (size_t i = 0; i < n; ++i) {
-                    const Page& bp = b.blog_posts[i];
+                std::map<std::string, const Page*> pgMap;
+                for (const auto& bp : b.blog_posts) pgMap[bp.file] = &bp;
+                for (const auto& fl : b.query_out["home_posts"]) {
+                    auto it = pgMap.find(fl.get<std::string>());
+                    if (it == pgMap.end()) continue;
+                    const Page& bp = *it->second;
                     posts.push_back(json{{"date", format_date_local(bp.dateT)},
                                          {"href", "blog/" + bp.file.substr(5) + ".html"},
                                          {"title", bp.title},
                                          {"desc", std::string()}});
                 }
-                ctx.blog_posts = posts;
+                if (!posts.empty()) ctx.blog_posts = posts;
             }
             ctx.title = cfg.title;
             ctx.desc = cfg.description;
@@ -1250,11 +1294,18 @@ static void render_locales(BuildContext& b) {
         // 8.5) 博客流（约定优于配置：md/blog/ 存在时启用）
         //      详情页 blog/<name>.html（面包屑=首页/博客/标题，上下篇=博客邻篇）
         //      + 列表页 blog/index.html + 分页 blog/page/N.html（每页 10 篇）
-        if (!b.blog_posts.empty()) {
+        if (b.query_ready && b.query_out.contains("blog_order") && b.query_out["blog_order"].is_array()
+            && !b.query_out["blog_order"].empty()) {
             fs::path blogDir = in_dir / "blog";
             fs::create_directories(locOut / "blog", ec);
-            for (size_t bi = 0; bi < b.blog_posts.size(); ++bi) {
-                Page& p = b.blog_posts[bi];
+            // 文章渲染顺序由插件 blog_order（有序 file 列表）决定；引擎只做渲染
+            std::map<std::string, Page> pgMap;
+            for (const auto& bp : b.blog_posts) pgMap[bp.file] = bp;
+            const auto& qOrder = b.query_out["blog_order"];
+            for (size_t bi = 0; bi < qOrder.size(); ++bi) {
+                auto pit = pgMap.find(qOrder[bi].get<std::string>());
+                if (pit == pgMap.end()) continue;
+                Page p = pit->second;
                 if (p.draft && !includeDrafts) continue;
                 std::string rel = p.file.substr(5);          // "blog/xxx" → "xxx"
                 fs::path f = blogDir / (rel + ".md");
@@ -1295,16 +1346,23 @@ static void render_locales(BuildContext& b) {
                 rt = subst_tokens(rt, {{"minutes", std::to_string(mins)}, {"words", std::to_string(cjk + words)}});
                 std::string meta = esc(pub) + " · " + rt;
                 // 上下篇数据（博客邻篇，缺位置灰——行业标准；链接相对 blog/ 目录）
+                // 邻篇 = 插件排序结果的前后项（机械索引，非查询）
                 json pagerBj;
-                pagerBj["show"] = (bi > 0) || (bi + 1 < b.blog_posts.size());
-                if (bi > 0)
-                    pagerBj["prev"] = json{{"show", true}, {"title", b.blog_posts[bi - 1].title},
-                                           {"href", b.blog_posts[bi - 1].file.substr(5) + ".html"}};
-                else pagerBj["prev"] = json{{"show", false}};
-                if (bi + 1 < b.blog_posts.size())
-                    pagerBj["next"] = json{{"show", true}, {"title", b.blog_posts[bi + 1].title},
-                                           {"href", b.blog_posts[bi + 1].file.substr(5) + ".html"}};
-                else pagerBj["next"] = json{{"show", false}};
+                pagerBj["show"] = (bi > 0) || (bi + 1 < qOrder.size());
+                if (bi > 0) {
+                    auto pit2 = pgMap.find(qOrder[bi - 1].get<std::string>());
+                    if (pit2 != pgMap.end())
+                        pagerBj["prev"] = json{{"show", true}, {"title", pit2->second.title},
+                                               {"href", pit2->second.file.substr(5) + ".html"}};
+                    else pagerBj["prev"] = json{{"show", false}};
+                } else pagerBj["prev"] = json{{"show", false}};
+                if (bi + 1 < qOrder.size()) {
+                    auto nit = pgMap.find(qOrder[bi + 1].get<std::string>());
+                    if (nit != pgMap.end())
+                        pagerBj["next"] = json{{"show", true}, {"title", nit->second.title},
+                                               {"href", nit->second.file.substr(5) + ".html"}};
+                    else pagerBj["next"] = json{{"show", false}};
+                } else pagerBj["next"] = json{{"show", false}};
                 // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
                 json hd = build_head_data(p.file, 1, p.title, p.desc, p.dateT, p.dateT, true, {}, "", "");
                 TocResult t = build_toc(p.html);
@@ -1332,12 +1390,11 @@ static void render_locales(BuildContext& b) {
             }
             // 列表页 + 分页：第一页 blog/index.html，后续 blog/page/N.html
             // （列表页在 blog/ 下 relBase="../"；分页页在 blog/page/ 下 relBase="../../"）
+            // 分页分组由插件 blog_pages 决定（每页 file 数组）；引擎只渲染 + 生成分页导航
             {
-                const int kPerPage = 10;
-                std::vector<const Page*> vis;
-                for (const auto& p : b.blog_posts)
-                    if (!(p.draft && !includeDrafts)) vis.push_back(&p);
-                size_t pagesN = (vis.size() + kPerPage - 1) / kPerPage;
+                json qPages = b.query_out.value("blog_pages", json::array());
+                if (!qPages.is_array()) qPages = json::array();
+                size_t pagesN = qPages.size();
                 for (size_t pi = 0; pi < pagesN; ++pi) {
                     bool isPageSub = (pi > 0);                  // 分页页位于 blog/page/
                     std::string relBase = isPageSub ? "../../" : "../";
@@ -1345,8 +1402,10 @@ static void render_locales(BuildContext& b) {
                     std::string navBase  = isPageSub ? "../" : "";   // 分页导航链接前缀
                     // 博客列表数据（BlogList/BlogCard 组件渲染；分页 BlogPager 数据化）
                     json posts = json::array();
-                    for (size_t k = pi * kPerPage; k < vis.size() && k < (pi + 1) * kPerPage; ++k) {
-                        const Page& p = *vis[k];
+                    for (const auto& fl : qPages[pi]) {
+                        auto pit = pgMap.find(fl.get<std::string>());
+                        if (pit == pgMap.end()) continue;
+                        const Page& p = pit->second;
                         posts.push_back(json{{"date", format_date_local(p.dateT)},
                                              {"href", cardBase + p.file.substr(5) + ".html"},
                                              {"title", p.title}, {"desc", p.desc}});
@@ -1397,22 +1456,14 @@ static void render_locales(BuildContext& b) {
         // 9) 标签聚合页：基于 front matter 的 tags，自动生成每个标签一个列表页 + 总览页
         //    （tags 页位于 tags/ 子目录：relBase="../"；博客文章也参与聚合，链接 ../blog/xxx.html）
         {
-            std::map<std::string, std::vector<std::string>> tagMap;
-            for (const auto& p : pages) {
-                if (p.draft && !includeDrafts) continue;
-                for (const auto& t : p.tags) tagMap[t].push_back(p.file);
-            }
-            for (const auto& p : b.blog_posts) {
-                if (p.draft && !includeDrafts) continue;
-                for (const auto& t : p.tags) tagMap[t].push_back(p.file);
-            }
-            if (!tagMap.empty()) {
+            if (b.query_ready && b.query_out.contains("tags") && b.query_out["tags"].is_array()
+                && !b.query_out["tags"].empty()) {
                 fs::create_directories(locOut / "tags", ec);
-                // 标签聚合数据（TagOverview/TagItem 组件渲染）
-                json tags = json::array();
-                for (auto& kv : tagMap)
-                    // 聚合页位于 tags/ 目录内，标签链接用相对自身的 X.html（不能带 tags/ 前缀）
-                    tags.push_back(json{{"name", kv.first}, {"href", slugify(kv.first) + ".html"}});
+                // 标签聚合由插件完成（tags 数组 + tag_pages 每标签 file 列表）；引擎只渲染
+                std::map<std::string, const Page*> pgMap;
+                for (const auto& p : pages) pgMap[p.file] = &p;
+                for (const auto& p : b.blog_posts) pgMap[p.file] = &p;
+                json tags = b.query_out["tags"];
                 // tags 聚合页 → PageCtx（TagOverview/TagItem 组件渲染）
                 PageCtx ctx;
                 ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
@@ -1424,29 +1475,31 @@ static void render_locales(BuildContext& b) {
                 std::string ov = map_render_page(cfg, opt, ctx, typeForMode("tags", "tags"));
                 std::ofstream(locOut / "tags" / "index.html")
                     << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, dict)), locOut) : i18n_replace(ov, dict));
-                for (auto& kv : tagMap) {
-                    // 标签单页数据（TagPage/TagDocItem 组件渲染）
+                const json& tagPages = b.query_out.contains("tag_pages")
+                                        ? b.query_out["tag_pages"] : json::object();
+                for (auto it = tagPages.begin(); it != tagPages.end(); ++it) {
+                    const std::string& tname = it.key();
+                    // 标签单页数据（TagPage/TagDocItem 组件渲染；docs 顺序由插件给出）
                     json docs = json::array();
-                    for (auto& fl : kv.second) {
-                        std::string t, d;
-                        for (const auto& p : pages) if (p.file == fl) { t = p.title; break; }
-                        if (fl.size() > 5 && fl.compare(0, 5, "blog/") == 0)
-                            for (const auto& p : b.blog_posts)
-                                if (p.file == fl) { t = p.title; d = format_date_local(p.dateT); break; }
-                        if (t.empty()) t = fl;
-                        docs.push_back(json{{"href", "../" + fl + ".html"}, {"title", t},
+                    for (const auto& fl : it.value()) {
+                        auto pit = pgMap.find(fl.get<std::string>());
+                        if (pit == pgMap.end()) continue;
+                        const Page& p = *pit->second;
+                        std::string d = (p.file.size() > 5 && p.file.compare(0, 5, "blog/") == 0)
+                                        ? format_date_local(p.dateT) : "";
+                        docs.push_back(json{{"href", "../" + p.file + ".html"}, {"title", p.title},
                                             {"date", d}, {"desc", std::string()}});
                     }
                     PageCtx tctx;
                     tctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
-                    tctx.tag_name = kv.first;
+                    tctx.tag_name = tname;
                     tctx.tag_docs = docs;
-                    tctx.title = "#" + kv.first;
+                    tctx.title = "#" + tname;
                     tctx.desc = cfg.description;
                     tctx.curLocale = curLocale; tctx.lang_data = langData;
                     tctx.i18nJson = i18nJson; tctx.relBase = "../";
                     std::string tp = map_render_page(cfg, opt, tctx, typeForMode("tag-page", "tag-page"));
-                    std::ofstream(locOut / "tags" / (slugify(kv.first) + ".html"))
+                    std::ofstream(locOut / "tags" / (slugify(tname) + ".html"))
                         << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(tp, dict)), locOut) : i18n_replace(tp, dict));
                 }
             }
