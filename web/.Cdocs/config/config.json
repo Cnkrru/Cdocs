@@ -69,7 +69,8 @@
       "docs": "route/docs.json",
       "docs-v1": "route/docs-v1.json",
       "blog": "route/blog.json"
-    }
+    },
+    "themeName": "ink"
   },
   "head": {
     "logo": "{{brand}}",
@@ -83,7 +84,7 @@
       },
       {
         "title": "{{navDocs}}",
-        "file": "docs/getting-started/intro"
+        "file": "getting-started/intro"
       },
       {
         "title": "{{navBlog}}",

@@ -1,1 +1,21 @@
     <a class="tag" href="{{href}}">#{{name}}</a>
+<style>
+/* 标签徽章（总览页与单标签页共用） */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.tag:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+}
+</style>

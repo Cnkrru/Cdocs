@@ -449,11 +449,18 @@ static void render_locales(BuildContext& b) {
         bool hasBlog = b.query_ready && b.query_out.contains("blog_order")
                        && b.query_out["blog_order"].is_array()
                        && !b.query_out["blog_order"].empty();
+        // 归一化：nav.file 可能是 "docs/xxx"（相对 md 根）或 "xxx"（相对版本源目录如 md/docs），
+        // 统一去 docs/ 前缀后与收集到的页面 file 集合比较（版本化时侧边栏 file 相对源目录）。
+        auto norm = [](const std::string& f) -> std::string {
+            if (f.rfind("docs/", 0) == 0) return f.substr(5);   // docs/xxx → xxx
+            return f;
+        };
         std::vector<Link> keep;
         for (const auto& l : b.cfg.header.nav) {
             if (l.file.empty()) { keep.push_back(l); continue; }
             if (l.file == "blog/index") { if (hasBlog) keep.push_back(l); continue; }
-            if (files.count(l.file)) keep.push_back(l);
+            if (l.file == "index") { keep.push_back(l); continue; }   // 首页恒保留
+            if (files.count(norm(l.file))) keep.push_back(l);
         }
         b.cfg.header.nav = std::move(keep);
     }
