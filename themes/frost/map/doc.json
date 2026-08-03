@@ -1,0 +1,36 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "html": "<article class=\"paper-article\">\n  <header class=\"paper-article-head\">\n    <h1>{{title}}</h1>\n"
+    },
+    {
+      "html": "  </header>\n  <div class=\"paper-article-body\">\n{{body}}\n  </div>\n"
+    },
+    {
+      "component": "ArticlePager",
+      "if": "pager.show",
+      "sections": [
+        {
+          "component": "PagerPrev",
+          "if": "pager.prev.show"
+        },
+        {
+          "component": "PagerPrevDisabled",
+          "if": "pager.prev.hidden"
+        },
+        {
+          "component": "PagerNext",
+          "if": "pager.next.show"
+        },
+        {
+          "component": "PagerNextDisabled",
+          "if": "pager.next.hidden"
+        }
+      ]
+    },
+    {
+      "html": "</article>\n"
+    }
+  ]
+}

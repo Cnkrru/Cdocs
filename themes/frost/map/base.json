@@ -1,7 +1,7 @@
 {
   "sections": [
     {
-      "html": "<!DOCTYPE html>\n<html lang=\"{{lang}}\" data-theme=\"light\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <script>try{var t=localStorage.getItem('paper-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>\n  <title>{{title}}</title>\n"
+      "html": "<!DOCTYPE html>\n<html lang=\"{{lang}}\" data-theme=\"light\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <script>try{var t=localStorage.getItem('frost-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>\n  <title>{{title}}</title>\n"
     },
     {
       "component": "MetaHead",

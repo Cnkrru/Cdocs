@@ -1,0 +1,22 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "component": "Paper404",
+      "sections": [
+        {
+          "html": "<p class=\"frost-404-code\">404</p>\n"
+        },
+        {
+          "html": "<h1>{{notFoundTitle}}</h1>\n"
+        },
+        {
+          "html": "<p class=\"frost-404-desc\">{{notFoundDesc}}</p>\n"
+        },
+        {
+          "html": "<div class=\"frost-404-actions\">\n<a class=\"frost-btn frost-btn-primary\" href=\"index.html\">{{backHome}}</a>\n<a class=\"frost-btn\" href=\"blog/\">归档</a>\n</div>\n"
+        }
+      ]
+    }
+  ]
+}

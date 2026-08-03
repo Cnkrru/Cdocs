@@ -7,7 +7,13 @@
 .paper-post {
   padding: 22px 0;
   border-bottom: 1px solid var(--line);
+  padding-left: 8px;
+  margin-left: -8px;
+  border-radius: 6px;
+  transition: background-color .15s ease;
 }
+.paper-post:hover { background: var(--bg-soft); }
+.paper-post:hover .paper-post-title a { color: var(--accent); }
 .paper-post:first-child { padding-top: 8px; }
 .paper-post-date {
   font-family: var(--font-mono);

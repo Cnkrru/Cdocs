@@ -1,0 +1,39 @@
+<article class="frost-post glass">
+  <time class="frost-post-date">{{date}}</time>
+  <h2 class="frost-post-title"><a href="{{href}}">{{title}}</a></h2>
+  <p class="frost-post-desc">{{desc}}</p>
+</article>
+<style>
+.frost-post {
+  padding: 22px 26px;
+  transition: all .18s ease;
+  cursor: pointer;
+}
+.frost-post:hover { transform: translateY(-3px); }
+.frost-post-date {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .05em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.frost-post-title {
+  font-family: var(--font-serif);
+  font-size: 21px;
+  margin: 6px 0 8px;
+  line-height: 1.45;
+}
+.frost-post-title a {
+  color: var(--fg);
+  text-decoration: none;
+  transition: color .15s;
+  text-shadow: var(--text-shadow);
+}
+.frost-post:hover .frost-post-title a { color: var(--accent); }
+.frost-post-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+</style>

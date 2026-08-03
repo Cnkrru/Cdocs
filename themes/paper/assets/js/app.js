@@ -14,7 +14,7 @@
     toggle.addEventListener('click', function () {
       var next = current() === 'sun' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem('theme', next); } catch (e) {}
+      try { localStorage.setItem('paper-theme', next); } catch (e) {}
       toggle.innerHTML = map[current()] || '';
     });
   }

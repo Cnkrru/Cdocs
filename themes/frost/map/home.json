@@ -8,7 +8,7 @@
       "html": "  <p class=\"paper-hero-sub\">{{hero.subtitle}}</p>\n"
     },
     {
-      "html": "  <p class=\"paper-hero-meta\"><a href=\"feed.xml\" rel=\"alternate\">RSS</a> · <a href=\"blog/\">归档</a> · <a href=\"tags/\">标签</a></p>\n</section>\n"
+      "html": "  <p class=\"paper-hero-meta\"><a href=\"rss.xml\" rel=\"alternate\">RSS</a> · <a href=\"blog/\">归档</a> · <a href=\"tags/\">标签</a></p>\n</section>\n"
     },
     {
       "html": "<section class=\"paper-feed\">\n  <h2 class=\"paper-feed-title\">最新文章 <a href=\"blog/\" class=\"paper-feed-cta\">归档 →</a></h2>\n"
