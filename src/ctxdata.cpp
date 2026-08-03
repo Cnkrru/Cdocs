@@ -82,10 +82,17 @@ json nav_groups_json(const std::vector<NavNode>& nodes, const std::string& curFi
 json cards_json(const SiteConfig& cfg, const std::vector<Page>& pages) {    std::vector<const Page*> shown;
     if (!cfg.homeCardsEnabled) return nullptr;   // home.cards: false → 关闭卡片区（地图 if: cards 不渲染）
     if (!cfg.homeCards.empty()) {
+        // 归一化：hc.file 可能是 "docs/xxx"（相对 md 根）或 "xxx"（相对版本源目录如 md/docs），
+        // 双向匹配（与 header.nav 过滤同构），避免版本化站点卡片白名单全部失配。
+        auto norm = [](const std::string& f) -> std::string {
+            if (f.rfind("docs/", 0) == 0) return f.substr(5);   // docs/xxx → xxx
+            return f;
+        };
         for (const auto& hc : cfg.homeCards) {
             const Page* found = nullptr;
+            std::string hf = norm(hc.file);
             for (const auto& p : pages)
-                if (!p.draft && p.file == hc.file) { found = &p; break; }
+                if (!p.draft && (p.file == hc.file || p.file == hf)) { found = &p; break; }
             if (!found) {
                 std::cerr << color::warn("提示: ") << "home.cards 引用了不存在的页面: "
                           << hc.file << "（已跳过）\n";
