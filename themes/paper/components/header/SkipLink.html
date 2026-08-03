@@ -1,0 +1,18 @@
+<a class="paper-skip" href="#main" aria-label="{{skip_label}}">{{skip_label}}</a>
+<style>
+.paper-skip {
+  position: fixed;
+  left: 50%;
+  top: -60px;
+  transform: translateX(-50%);
+  z-index: 200;
+  padding: 9px 16px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 0 0 10px 10px;
+  text-decoration: none;
+  font-size: 14px;
+  transition: top .18s ease;
+}
+.paper-skip:focus { top: 0; }
+</style>

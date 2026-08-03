@@ -1,0 +1,18 @@
+<button id="theme-toggle" class="paper-theme-toggle" aria-label="{{header.theme_label}}"></button>
+<style>
+.paper-theme-toggle {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 14px;
+  transition: border-color .15s, color .15s;
+}
+.paper-theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+/* 隐藏硬编码的 🌓，由 JS 注入 sun/moon 图标 */
+.paper-theme-toggle { font-size: 0; }
+.paper-theme-toggle .icon { width: 18px; height: 18px; vertical-align: middle; }
+</style>

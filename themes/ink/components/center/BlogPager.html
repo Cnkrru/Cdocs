@@ -1,0 +1,31 @@
+  <nav class="blog-pager">
+{{slot}}  </nav>
+<style>
+/* 博客分页 */
+.blog-pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+.blog-pager a,
+.blog-pager .bp-cur {
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.blog-pager a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.blog-pager .bp-cur {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 500;
+}
+</style>

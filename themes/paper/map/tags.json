@@ -1,0 +1,20 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "html": "<section class=\"paper-tags\">\n  <h1 class=\"paper-archive-title\">{{allTags}}</h1>\n"
+    },
+    {
+      "component": "TagCloud",
+      "sections": [
+        {
+          "component": "TagItem",
+          "each": "tags"
+        }
+      ]
+    },
+    {
+      "html": "</section>\n"
+    }
+  ]
+}

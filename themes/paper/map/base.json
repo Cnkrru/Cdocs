@@ -1,0 +1,111 @@
+{
+  "sections": [
+    {
+      "html": "<!DOCTYPE html>\n<html lang=\"{{lang}}\" data-theme=\"{{theme}}\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <script>try{var t=localStorage.getItem('theme')||document.documentElement.getAttribute('data-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>\n  <title>{{title}}</title>\n"
+    },
+    {
+      "component": "MetaHead",
+      "sections": [
+        {
+          "component": "MetaDescription",
+          "if": "head_meta.desc"
+        },
+        {
+          "component": "MetaOgItem",
+          "each": "head_meta.og"
+        },
+        {
+          "component": "MetaNameItem",
+          "each": "head_meta.names"
+        },
+        {
+          "component": "MetaLink",
+          "each": "head_links"
+        },
+        {
+          "component": "JsonLd",
+          "if": "jsonld"
+        },
+        {
+          "component": "MetaHighlight",
+          "if": "show_highlight"
+        },
+        {
+          "component": "MetaVars",
+          "if": "theme_vars"
+        },
+        {
+          "component": "MetaCss",
+          "if": "custom_css_href"
+        }
+      ]
+    },
+    {
+      "html": "</head>\n<body class=\"paper{{body_class}}\">\n"
+    },
+    {
+      "component": "SkipLink"
+    },
+    {
+      "component": "Header",
+      "sections": [
+        {
+          "component": "Logo"
+        },
+        {
+          "component": "TopNav",
+          "if": "header.topnav",
+          "sections": [
+            {
+              "component": "TopNavLink",
+              "each": "header.topnav"
+            }
+          ]
+        },
+        {
+          "component": "ThemeToggle",
+          "if": "header.show_theme_toggle"
+        },
+        {
+          "component": "GhLink",
+          "if": "header.github"
+        }
+      ]
+    },
+    {
+      "html": "  <main class=\"paper-main\" id=\"main\">\n"
+    },
+    {
+      "slot": "main"
+    },
+    {
+      "html": "  </main>\n"
+    },
+    {
+      "component": "Footer",
+      "if": "footer.show",
+      "sections": [
+        {
+          "component": "FooterText",
+          "if": "footer.text"
+        }
+      ]
+    },
+    {
+      "component": "Scripts",
+      "sections": [
+        {
+          "component": "ScriptHighlight",
+          "if": "scripts.highlight"
+        },
+        {
+          "component": "ScriptI18n",
+          "if": "scripts.i18n_json"
+        }
+      ]
+    },
+    {
+      "html": "</body>\n</html>\n"
+    }
+  ]
+}

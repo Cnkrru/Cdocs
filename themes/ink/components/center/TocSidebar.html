@@ -1,0 +1,60 @@
+  <aside class="sidebar right">
+    <nav class="toc-nav">
+      <div class="toc-title">{{tocTitle}}</div>
+      <ul class="toc-list">
+{{slot}}      </ul>
+    </nav>
+  </aside>
+<style>
+/* 右侧边栏（本页目录 TOC） */
+.sidebar.right {
+  width: var(--sidebar-right-w);
+  flex: 0 0 var(--sidebar-right-w);
+  position: sticky;
+  top: var(--topbar-h);
+  max-height: calc(100vh - var(--topbar-h));
+  overflow: auto;
+  padding: 24px 16px;
+}
+.toc-nav {
+  font-size: 14px;
+}
+.toc-title {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--border);
+}
+.toc-list li {
+  margin: 0;
+}
+.toc-list a {
+  display: block;
+  padding: 5px 12px;
+  color: var(--muted);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  margin-left: -2px;
+  line-height: 1.5;
+  transition: color .12s;
+}
+.toc-list a:hover {
+  color: var(--fg);
+}
+.toc-list a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+}
+@media (max-width:1100px) {
+  .sidebar.right {
+    display: none;
+  }
+}
+</style>

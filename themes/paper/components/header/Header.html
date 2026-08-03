@@ -1,0 +1,24 @@
+<header class="paper-top">
+  <div class="paper-top-inner">
+{{slot}}  </div>
+</header>
+<style>
+.paper-top {
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.paper-top-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 24px;
+  display: flex;
+  align-items: baseline;
+  gap: 22px;
+}
+@media (max-width:560px) {
+  .paper-top-inner { padding: 14px 18px; flex-wrap: wrap; gap: 10px; }
+}
+</style>

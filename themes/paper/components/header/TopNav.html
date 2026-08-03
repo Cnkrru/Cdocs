@@ -1,0 +1,12 @@
+<nav class="paper-nav">
+{{slot}}  </nav>
+<style>
+.paper-nav {
+  display: flex;
+  gap: 16px;
+  margin-left: 4px;
+}
+@media (max-width:560px) {
+  .paper-nav { order: 3; flex-basis: 100%; gap: 12px; }
+}
+</style>

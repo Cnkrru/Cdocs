@@ -1,0 +1,8 @@
+<section class="tab-panel" data-label="{{label}}">{{slot}}</section>
+<style>
+/* Tab 面板：默认隐藏，active 显示（切换由 Tabs 按钮驱动） */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.tab-panel > :first-child { margin-top: 0; }
+.tab-panel > :last-child { margin-bottom: 0; }
+</style>

@@ -1,0 +1,37 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "html": "<section class=\"paper-hero\">\n  <h1>{{hero.title}}</h1>\n"
+    },
+    {
+      "html": "  <p class=\"paper-hero-sub\">{{hero.subtitle}}</p>\n"
+    },
+    {
+      "html": "</section>\n"
+    },
+    {
+      "component": "ArticleList",
+      "sections": [
+        {
+          "component": "ArticleCard",
+          "each": "blog_posts"
+        }
+      ]
+    },
+    {
+      "component": "ArticlePager",
+      "if": "blog_pager.show",
+      "sections": [
+        {
+          "component": "BlogPrev",
+          "if": "blog_pager.prev_href"
+        },
+        {
+          "component": "BlogNext",
+          "if": "blog_pager.next_href"
+        }
+      ]
+    }
+  ]
+}

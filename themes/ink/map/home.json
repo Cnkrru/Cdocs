@@ -1,0 +1,38 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "component": "Hero",
+      "if": "hero",
+      "sections": [
+        {
+          "html": "  <h1>{{hero.title}}</h1>\n"
+        },
+        {
+          "component": "HeroSubtitle",
+          "if": "hero.subtitle"
+        },
+        {
+          "component": "HeroCta",
+          "if": "hero.cta_href"
+        }
+      ]
+    },
+    {
+      "component": "Cards",
+      "if": "cards",
+      "sections": [
+        {
+          "component": "Card",
+          "each": "cards",
+          "sections": [
+            {
+              "component": "CardDesc",
+              "if": "desc"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

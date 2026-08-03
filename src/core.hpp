@@ -201,6 +201,7 @@ extern fs::path g_dest;      // -d/--dest：输出目录（serve 也用作预览
 extern fs::path g_engine;    // -c/--config：引擎/配置根目录
 extern bool     g_quiet;     // -q/--quiet：静默输出
 extern bool     g_verbose;   // -V/--verbose：详细输出
+extern std::string g_theme_name; // 多主题：config site.themeName 指定的主题名（空 = 用 .Cdocs/theme）
 extern bool     g_include_drafts; // build -D/--drafts：包含草稿
 extern bool     g_clean_before;   // build --clean：构建前清空输出
 extern bool     g_incremental;    // serve -w：增量构建（仅 watch 循环置位）

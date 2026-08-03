@@ -29,6 +29,7 @@ fs::path g_dest     = "dist";    // -d/--dest：输出目录（serve 也用作�
 fs::path g_engine   = ".Cdocs";  // -c/--config：引擎/配置根目录
 bool     g_quiet    = false;     // -q/--quiet：静默输出
 bool     g_verbose  = false;     // -V/--verbose：详细输出
+std::string g_theme_name;            // config site.themeName（多主题：themes/<name>）
 bool     g_include_drafts = false;// build -D/--drafts：包含草稿
 bool     g_clean_before   = false;// build --clean：构建前清空输出
 bool     g_incremental    = false;// serve -w：增量构建（仅 watch 循环置位）

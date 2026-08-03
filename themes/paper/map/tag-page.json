@@ -1,0 +1,20 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "html": "<section class=\"paper-tag-page\">\n  <h1 class=\"paper-archive-title\">#{{tag_name}}</h1>\n"
+    },
+    {
+      "component": "ArticleList",
+      "sections": [
+        {
+          "component": "ArticleCard",
+          "each": "tag_docs"
+        }
+      ]
+    },
+    {
+      "html": "</section>\n"
+    }
+  ]
+}

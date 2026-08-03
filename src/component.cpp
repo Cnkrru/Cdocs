@@ -14,6 +14,17 @@
 // ogUrl 为空时跳过需绝对地址的 og:url / og:image（通常由 config.url 驱动）
 fs::path theme_root() {
     std::error_code ec;
+    // 多主题：config site.themeName 指定 → themes/<name>（引擎目录优先，其次项目根 themes/）
+    if (!g_theme_name.empty()) {
+        fs::path t1 = g_engine / "themes" / g_theme_name;
+        if (fs::is_directory(t1, ec)) return t1;
+        fs::path t2 = fs::current_path() / "themes" / g_theme_name;
+        if (fs::is_directory(t2, ec)) return t2;
+        if (comp_warned_once("theme:" + g_theme_name))
+            std::cerr << color::warn("警告: ") << "主题 themes/" << g_theme_name
+                      << " 不存在（回退 .Cdocs/theme）\n";
+    }
+    // 单主题兼容：.Cdocs/theme（默认，未配置 themeName 时）
     fs::path t = g_engine / "theme";
     if (fs::is_directory(t, ec)) return t;
     return g_engine;
@@ -27,13 +38,11 @@ bool comp_warned_once(const std::string& k) {
 
 static fs::path components_dir() { return theme_root() / "components"; }
 
-std::string load_component(const std::string& name) {
-    fs::path dir = components_dir();
+// 在当前主题目录内查找并读取组件
+static std::string find_component_in(const fs::path& dir, const std::string& name) {
     std::error_code ec;
-    // 根级优先：components/<Name>.html
     fs::path p = dir / (name + ".html");
     if (fs::is_regular_file(p, ec)) return read_file(p);
-    // 区域子目录（header/ footer/ center/ …）：递归查找 <Name>.html
     if (fs::is_directory(dir, ec)) {
         for (auto it = fs::recursive_directory_iterator(dir, ec), end = fs::recursive_directory_iterator();
              it != end; it.increment(ec)) {
@@ -41,6 +50,18 @@ std::string load_component(const std::string& name) {
             if (it->is_regular_file(ec) && it->path().filename().string() == name + ".html")
                 return read_file(it->path());
         }
+    }
+    return {};
+}
+
+std::string load_component(const std::string& name) {
+    std::string body = find_component_in(components_dir(), name);
+    if (!body.empty()) return body;
+    // 回退默认主题（多主题场景：paper 等主题只带视觉组件，MetaHead/Scripts/Pager 等机制组件共享）
+    fs::path fallback = g_engine / "theme" / "components";
+    if (theme_root() != g_engine / "theme") {
+        std::error_code fec;
+        if (fs::is_directory(fallback, fec)) return find_component_in(fallback, name);
     }
     return {};
 }

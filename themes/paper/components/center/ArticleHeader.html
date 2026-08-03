@@ -1,0 +1,26 @@
+<article class="paper-article">
+  <header class="paper-article-head">
+    <h1>{{title}}</h1>
+{{slot}}  </header>
+  <div class="paper-article-body">
+</div>
+</article>
+<style>
+.paper-article {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+}
+.paper-article-head h1 {
+  font-family: var(--font-serif);
+  font-size: 30px;
+  line-height: 1.35;
+  margin: 8px 0 10px;
+  letter-spacing: .01em;
+}
+.paper-article-body { display: contents; }
+@media (max-width:560px) {
+  .paper-article { padding: 18px 18px 36px; }
+  .paper-article-head h1 { font-size: 25px; }
+}
+</style>

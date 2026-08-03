@@ -1,0 +1,42 @@
+{
+  "extends": "base",
+  "sections": [
+    {
+      "html": "<section class=\"paper-archive\">\n  <h1 class=\"paper-archive-title\">{{blogTitle}}</h1>\n"
+    },
+    {
+      "component": "ArticleList",
+      "sections": [
+        {
+          "component": "ArticleCard",
+          "each": "blog_posts"
+        }
+      ]
+    },
+    {
+      "component": "ArticlePager",
+      "if": "blog_pager.show",
+      "sections": [
+        {
+          "component": "BlogPrev",
+          "if": "blog_pager.prev_href"
+        },
+        {
+          "component": "BlogPageCur",
+          "if": "blog_pager.cur"
+        },
+        {
+          "component": "BlogPageNum",
+          "each": "blog_pager.pages"
+        },
+        {
+          "component": "BlogNext",
+          "if": "blog_pager.next_href"
+        }
+      ]
+    },
+    {
+      "html": "</section>\n"
+    }
+  ]
+}

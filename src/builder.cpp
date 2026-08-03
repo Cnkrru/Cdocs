@@ -300,6 +300,8 @@ static void load_site_config(BuildContext& b) {
         if (site.contains("title"))       cfg.title = site["title"].get<std::string>();
         if (site.contains("description")) cfg.description = site["description"].get<std::string>();
         if (site.contains("theme"))       cfg.theme = site["theme"].get<std::string>();
+        if (site.contains("themeName") && site["themeName"].is_string())
+            g_theme_name = site["themeName"].get<std::string>();   // 多主题：themes/<name>
         if (site.contains("url"))         cfg.url = site["url"].get<std::string>();
         if (site.contains("ogImage"))     cfg.ogImage = site["ogImage"].get<std::string>();
         if (site.contains("compress") && site["compress"].is_boolean())
@@ -1037,6 +1039,20 @@ static void render_locales(BuildContext& b) {
                 ctx.hero["cta_text"] = ctaText;
             }
             ctx.cards = cards_json(cfg, pages);
+            // 博客流注入首页（paper 等博客主题的 home 直接 each blog_posts 渲染文章流；
+            // 键齐全避免 {{date}} 等原样残留；desc 留空——首页列表可只要日期+标题）
+            if (!b.blog_posts.empty()) {
+                json posts = json::array();
+                size_t n = std::min<size_t>(8, b.blog_posts.size());
+                for (size_t i = 0; i < n; ++i) {
+                    const Page& bp = b.blog_posts[i];
+                    posts.push_back(json{{"date", format_date_local(bp.dateT)},
+                                         {"href", "blog/" + bp.file.substr(5) + ".html"},
+                                         {"title", bp.title},
+                                         {"desc", std::string()}});
+                }
+                ctx.blog_posts = posts;
+            }
             ctx.title = cfg.title;
             ctx.desc = cfg.description;
             ctx.curLocale = curLocale; ctx.lang_data = langData; ctx.i18nJson = i18nJson;
@@ -1412,12 +1428,14 @@ static void render_locales(BuildContext& b) {
                     // 标签单页数据（TagPage/TagDocItem 组件渲染）
                     json docs = json::array();
                     for (auto& fl : kv.second) {
-                        std::string t;
+                        std::string t, d;
                         for (const auto& p : pages) if (p.file == fl) { t = p.title; break; }
-                        if (t.empty() && fl.size() > 5 && fl.compare(0, 5, "blog/") == 0)
-                            for (const auto& p : b.blog_posts) if (p.file == fl) { t = p.title; break; }
+                        if (fl.size() > 5 && fl.compare(0, 5, "blog/") == 0)
+                            for (const auto& p : b.blog_posts)
+                                if (p.file == fl) { t = p.title; d = format_date_local(p.dateT); break; }
                         if (t.empty()) t = fl;
-                        docs.push_back(json{{"href", "../" + fl + ".html"}, {"title", t}});
+                        docs.push_back(json{{"href", "../" + fl + ".html"}, {"title", t},
+                                            {"date", d}, {"desc", std::string()}});
                     }
                     PageCtx tctx;
                     tctx.nav_groups = nav_groups_json(cfg.nav, "", "../");

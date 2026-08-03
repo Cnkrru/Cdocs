@@ -1,0 +1,37 @@
+      <div class="locale-switch" aria-label="{{localeLabel}}">
+{{slot}}      </div>
+<style>
+/* 语言切换器（多语言模式显示在顶栏右侧） */
+.locale-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.locale-switch .loc, .locale-switch a {
+  font-size: 13px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+.locale-switch a:hover {
+  color: var(--fg);
+  background: var(--panel);
+}
+/* 语言切换器前的地球图标由 style.css 的 .locale-switch::before 提供
+   （url() 相对主题资产目录，内嵌 style 无法承载） */
+@media (max-width:560px) {
+  .locale-switch {
+    padding: 2px;
+  }
+  .locale-switch::before {
+    display: none;
+  }
+}
+</style>
