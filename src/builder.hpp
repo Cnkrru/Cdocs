@@ -26,6 +26,17 @@ struct BuildContext {
 };
 
 // 构建静态站点（默认 docs → dist）
+// 并发渲染 worker pool（Hugo 式：多核并行渲染页面；render_pages.cpp 跨文件调用）
+void run_parallel(size_t n_tasks, const std::function<void(size_t)>& fn);
+
+struct PageCtx;   // ctxdata.hpp 定义（前向声明：map_render_page 用引用，避免与 ctxdata.hpp 循环 include）
+
+// 地图模式整页渲染（读 theme/map/<type>.html 按图拼接，render_pages.cpp 跨文件调用）
+std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
+                            const PageCtx& pcx, const std::string& mapType, bool isHome = false);
+// 按 mode 查找页面类型名（maps 注册表）
+std::string type_for_mode(const json& maps, const std::string& mode, const std::string& def);
+
 int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanBefore);
 
 #endif  // CDOCS_BUILDER_HPP

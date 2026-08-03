@@ -14,7 +14,7 @@ flowchart LR
   G --> DIST["dist/ 纯静态（HTML · SEO · RSS · PWA · search.json）"]
 ```
 
-## 生成器：22 个 C++ 模块
+## 生成器：25 个 C++ 模块
 
 生成器源码在 `src/`，按职责拆成模块（每个含 `.hpp` + `.cpp`），依赖方向严格向下：
 
@@ -40,20 +40,23 @@ flowchart LR
 | 构建 | `builder` | `run_build` 纯编排（配置→收集→渲染），`render_one_locale` 单语言渲染子函数 |
 | 构建 | `versions` | 多版本分派（config.versions 探测 + md-* 快照约定 + 根重定向） |
 | 构建 | `output` | 构建收尾产物（根重定向 / feed+PWA / sitemap / robots / 汇总 / 残留检测） |
+| 构建 | `ctxdata` | 页面数据装配（PageCtx + link/nav/cards/pager/header/footer json） |
+| 构建 | `site_config` | 配置加载（config.json 三区块 + route 映射 + 侧边栏导航） |
+| 构建 | `render_pages` | 页面类型渲染（首页/文档页/博客流/搜索/标签/single + head 数据） |
 | 脚手架 | `scaffold` | `init` / `section` / `new` / `clean` 站点骨架命令 |
 | 编排 | `cli` | 命令注册表分发 / 统一 flag 解析 / 帮助 / 退出码 |
 | 诊断 | `diag` | `doctor` / `check` / `config` / `routes` / `theme` / `plugins` / `versions` 诊断命令 |
 
-> 演进：早期把渲染部件与脚手架命令都堆在 `builder.cpp`（一度 3200 行）；v2 拆出 `component` / `shortcode` / `scaffold` / `diag`；v3 再拆 `versions`（多版本分派）与 `output`（构建收尾），并把 `render_locales`（762 行）的单语言渲染循环体提取为 `render_one_locale` 子函数，`builder` 最终只留编排主流程。
+> 演进：早期把渲染部件与脚手架命令都堆在 `builder.cpp`（一度 3200 行）；v2 拆出 `component` / `shortcode` / `scaffold` / `diag`；v3 再拆 `versions` / `output`，并把 `render_locales` 的单语言渲染循环体提取为 `render_one_locale`；v4 三拆 `ctxdata`（数据装配）/ `site_config`（配置加载）/ `render_pages`（页面类型渲染），`render_one_locale` 从 652 行瘦到编排（113 行），`builder.cpp` 1734 → 708 行，只留收集 + 地图渲染 + 编排。
 
 ## run_build：纯编排
 
 `builder.cpp` 的核心 `run_build()` 是「BuildContext + 8 个阶段函数」的纯编排：共享状态集中在 `BuildContext` 结构体，各阶段函数用局部引用别名绑定成员，逻辑逐字保留。
 
-1. `load_site_config` — 配置 + 导航 + 插件渲染开关
+1. `load_site_config`（site_config.cpp）— 配置 + 导航 + 插件渲染开关
 2. `prepare_pages` — 输入检查 + 收集页面 + 预扫描 front matter
 3. `render_locales` — 多语言构建循环（每语言调 `render_one_locale`）
-   - `render_one_locale` — 单语言渲染（assets/压缩/指纹/首页/文档页/博客/标签/404/RSS/PWA）
+   - `render_one_locale` — 单语言编排（assets/压缩/指纹 → 调 render_pages.cpp 六种页面渲染 → feeds/PWA）
 4. `write_root_redirect` — 多语言根 index.html 重定向
 5. `write_root_feeds_pwa` — 根目录默认语言 feed / PWA
 6. `write_sitemap` — sitemap.xml
