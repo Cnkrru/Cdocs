@@ -460,7 +460,9 @@ static void render_locales(BuildContext& b) {
             if (l.file.empty()) { keep.push_back(l); continue; }
             if (l.file == "blog/index") { if (hasBlog) keep.push_back(l); continue; }
             if (l.file == "index") { keep.push_back(l); continue; }   // 首页恒保留
-            if (files.count(norm(l.file))) keep.push_back(l);
+            // 双向匹配：非版本化时页面 file 相对 md 根（带 docs/ 前缀，nav 原样即可命中）；
+            // 版本化时页面 file 相对源目录（无前缀，需去 docs/ 前缀比较）。
+            if (files.count(l.file) || files.count(norm(l.file))) keep.push_back(l);
         }
         b.cfg.header.nav = std::move(keep);
     }
