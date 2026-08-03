@@ -102,14 +102,20 @@ a:focus-visible, button:focus-visible {
 }
 
 /* ---------- 头部：悬浮玻璃条 ---------- */
-.paper-top { padding: 20px 24px 0; }
+.paper-top {
+  padding: 20px 24px 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
 .paper-top-inner {
   max-width: 880px;
   margin: 0 auto;
-  padding: 10px 18px;
+  padding: 10px 14px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .frost-logo {
   font-family: var(--font-serif);
@@ -119,17 +125,24 @@ a:focus-visible, button:focus-visible {
   color: var(--fg);
   text-shadow: var(--text-shadow);
   text-decoration: none;
-  padding: 4px 12px;
-  border-radius: 12px;
+  padding: 4px 8px;
+  border-radius: 10px;
   white-space: nowrap;
+  transition: color .15s ease;
 }
-.frost-logo:hover { color: var(--accent); background: var(--accent-soft); }
-.frost-nav { display: flex; gap: 6px; margin-left: 4px; flex-wrap: wrap; }
+.frost-logo:hover { color: var(--accent); }
+.frost-nav {
+  display: flex;
+  gap: 4px;
+  margin-left: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
 .frost-nav-link {
   color: var(--fg);
   text-decoration: none;
   font-size: 14px;
-  padding: 6px 14px;
+  padding: 7px 14px;
   border-radius: 999px;
   border: 1px solid transparent;
   transition: all .15s ease;
@@ -140,7 +153,12 @@ a:focus-visible, button:focus-visible {
   background: var(--accent-soft);
   border-color: var(--accent-line);
 }
-.frost-tools { margin-left: auto; display: flex; gap: 8px; }
+.frost-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .frost-icon-btn {
   width: 36px;
   height: 36px;
@@ -565,7 +583,9 @@ a:focus-visible, button:focus-visible {
 @media (max-width:560px) {
   .paper-top { padding: 12px 12px 0; }
   .paper-top-inner { padding: 8px 12px; flex-wrap: wrap; gap: 8px; }
+  .frost-tools { order: 2; margin-left: auto; }
   .frost-nav { order: 3; flex-basis: 100%; margin-left: 0; }
+  .frost-logo { font-size: 19px; }
   .paper-hero { margin-top: 24px; }
   .paper-hero h1 { font-size: 30px; }
   .paper-article { margin-top: 20px; }

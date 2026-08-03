@@ -63,12 +63,18 @@
           ]
         },
         {
+          "html": "<div class=\"frost-tools\">\n"
+        },
+        {
           "component": "ThemeToggle",
           "if": "header.show_theme_toggle"
         },
         {
           "component": "GhLink",
           "if": "header.github"
+        },
+        {
+          "html": "</div>\n"
         }
       ]
     },
