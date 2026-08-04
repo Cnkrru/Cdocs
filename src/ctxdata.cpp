@@ -48,7 +48,7 @@ json nav_tree_json(const std::vector<NavNode>& nodes, const std::string& curFile
 // 左导航 → json（地图模式：人为约束 2 层「分组 → 条目」，替代 NavItem 无限递归）。
 // active_class 是属性级数据孔（" class=\"active\" aria-current=\"page\"" 或空），结构由组件定、状态由数据定。
 json nav_groups_json(const std::vector<NavNode>& nodes, const std::string& curFile,
-                            const std::string& relBase) {
+                     const std::string& relBase, const std::string& localeKey) {
     auto item_json = [&](const NavNode& n) {
         json it;
         it["title"] = n.title;
@@ -71,7 +71,7 @@ json nav_groups_json(const std::vector<NavNode>& nodes, const std::string& curFi
         if (n.is_group()) {
             for (const auto& c : n.children) g["items"].push_back(item_json(c));
         } else {
-            g["items"].push_back(item_json(n));   // 无分组的顶层条目 → 单条目组
+            g["items"].push_back(item_json(n));
         }
         arr.push_back(g);
     }
@@ -195,4 +195,19 @@ json footer_json(const SiteConfig& cfg) {
     d["links"] = json::array();
     for (const auto& l : cfg.footer.links) d["links"].push_back(link_json(l));
     return d;
+}
+
+// 页脚缓存：同构建内 footer 不变，每页重复调用浪费 CPU
+const json& footer_json_cached(const SiteConfig& cfg) {
+    static std::mutex mtx;
+    static json cached;
+    static bool init = false;
+    if (!init) {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (!init) {
+            cached = footer_json(cfg);
+            init = true;
+        }
+    }
+    return cached;
 }

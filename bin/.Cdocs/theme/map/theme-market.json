@@ -1,9 +1,0 @@
-{
-  "extends": "base",
-  "sections": [
-    {
-      "html": "<div class=\"market-intro\"><h1>{{navThemes}}</h1><p>主题 = 一个文件夹（<code>map/</code> + <code>components/</code> + <code>assets/</code>）。点「下载主题」直接从仓库获取主题目录，放入站点的 <code>themes/</code>，再在 <code>config.json</code> 设 <code>site.themeName</code> 即可切换。</p></div>\n<style>\n.market-intro { margin-bottom: 22px; }\n.market-intro h1 { border-bottom: 1px solid var(--border); padding-bottom: 10px; }\n.market-intro p { color: var(--muted); }\n.market-intro code { background: var(--panel); border: 1px solid var(--border-light); padding: 2px 6px; border-radius: 6px; font-family: var(--font-mono); font-size: .9em; }\n</style>"
-    },
-    { "component": "ThemeMarket" }
-  ]
-}

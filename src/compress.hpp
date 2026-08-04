@@ -8,6 +8,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <string>
 namespace fs = std::filesystem;
 
@@ -42,3 +43,11 @@ void fingerprint_assets(const fs::path& assetsDir);
 
 // 给 HTML 中引用的指纹资源追加 ?v=<hash>（href="/src=" 后跟闭合引号处）。
 std::string apply_fingerprints(const std::string& html);
+
+// JS 模块导入指纹：扫描 assets/js/ 中所有 .js 的 import 语句追加 ?v=hash
+void fingerprint_js_imports(const fs::path& assetsDir);
+
+// 输出管线融合：i18n_replace → minify_html → wrap_webp → apply_fingerprints
+// 减少中间字符串分配（4 次拷贝 → 统一入口），compress=false 时跳过 minify+webp
+std::string finalize_html(const std::string& raw, const std::map<std::string, std::string>& dict,
+                          const fs::path& locOut, bool compress);

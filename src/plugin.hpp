@@ -29,4 +29,7 @@ bool plugins_any();
 // 渲染流程可保持并行，不必因"存在插件"整体退化为单线程）
 bool plugins_hook_registered(const std::string& hook);
 
+// 终止所有持久插件进程（构建结束时调用，关闭 stdin → 进程优雅退出）
+void plugins_terminate_all();
+
 #endif  // CDOCS_PLUGIN_HPP

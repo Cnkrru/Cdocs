@@ -41,4 +41,7 @@ std::string type_for_mode(const json& maps, const std::string& mode, const std::
 
 int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanBefore);
 
+// pageSig 并发写保护（render_doc_pages / render_blog / render_tags 等并行写同一 map）
+extern std::mutex g_page_sig_mtx;
+
 #endif  // CDOCS_BUILDER_HPP

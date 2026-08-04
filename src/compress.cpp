@@ -11,6 +11,7 @@
 
 #include "compress.hpp"
 #include "core.hpp"     // read_file
+#include "i18n.hpp"     // i18n_replace
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -404,4 +405,77 @@ std::string apply_fingerprints(const std::string& html) {
         }
     }
     return out;
+}
+
+std::string finalize_html(const std::string& raw, const std::map<std::string, std::string>& dict,
+                          const fs::path& locOut, bool compress) {
+    if (!compress) return apply_fingerprints(i18n_replace(raw, dict));
+    std::string s = i18n_replace(raw, dict);
+    s = minify_html(std::move(s));
+    s = wrap_webp(std::move(s), locOut);
+    return apply_fingerprints(std::move(s));
+}
+
+// JS 模块导入指纹：ES module `import` 语句默认不带 ?v=，浏览器缓存旧版模块。
+// 扫描所有已指纹的 JS 文件，解析 import 路径 → 查 g_fp → 追加 ?v=hash。
+void fingerprint_js_imports(const fs::path& assetsDir) {
+    if (g_fp.empty()) return;
+    std::error_code ec;
+    if (!fs::is_directory(assetsDir, ec)) return;
+    for (auto it = fs::recursive_directory_iterator(assetsDir, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e2;
+        if (!fs::is_regular_file(*it, e2)) continue;
+        fs::path rel = fs::relative(*it, assetsDir, e2);
+        if (e2) continue;
+        std::string rels = rel.generic_string();
+        if (rels.compare(0, 3, "js/") != 0 || lower_ext(*it) != ".js") continue;
+        std::string content = read_file(*it);
+        if (content.empty()) continue;
+        bool changed = false;
+        // 匹配 import/export ... from '...' 或 import '...'
+        size_t pos = 0;
+        while (pos < content.size()) {
+            size_t imp = content.find("import ", pos);
+            if (imp == std::string::npos) {
+                imp = content.find("export ", pos);
+                if (imp == std::string::npos) break;
+                // export ... from '...' only
+                size_t from = content.find("from ", imp + 7);
+                if (from == std::string::npos || from > imp + 50) { pos = imp + 7; continue; }
+                imp = from;  // treat as import from here
+            }
+            size_t q1 = content.find('\'', imp);
+            size_t q2 = content.find('"', imp);
+            size_t q = std::min(q1, q2);
+            if (q == std::string::npos || q > imp + 100) { pos = imp + 7; continue; }
+            char quote = content[q];
+            size_t qe = content.find(quote, q + 1);
+            if (qe == std::string::npos || qe > q + 200) { pos = q + 1; continue; }
+            std::string importPath = content.substr(q + 1, qe - q - 1);
+            // 跳过外部模块（不带 ./ 或 ../ 的裸路径）
+            if (importPath.empty() || (importPath[0] != '.' && importPath.find("://") == std::string::npos)) {
+                pos = qe + 1; continue;
+            }
+            // 跳过已有 ?v= 的
+            if (importPath.find("?v=") != std::string::npos) { pos = qe + 1; continue; }
+            // 解析相对路径 → assets/ 相对键
+            fs::path ip = importPath;
+            fs::path resolved = fs::relative(fs::absolute((*it).path().parent_path() / ip), assetsDir);
+            std::string key = "assets/" + resolved.generic_string();
+            auto fp = g_fp.find(key);
+            if (fp != g_fp.end()) {
+                std::string repl = importPath + "?v=" + fp->second;
+                content.replace(q + 1, importPath.size(), repl);
+                pos = q + 1 + repl.size() + 1;  // skip past closing quote
+                changed = true;
+            } else {
+                pos = qe + 1;
+            }
+        }
+        if (changed) {
+            std::ofstream f((*it).path(), std::ios::binary);
+            f << content;
+        }
+    }
 }

@@ -3,8 +3,9 @@
 // 渲染管线：render_one_locale 准备资产后调本模块渲染各页面，feeds/PWA 仍在调用方。
 
 #include "render_pages.hpp"
+#include "component.hpp"     // theme_color
 #include "ctxdata.hpp"       // nav_groups_json / cards_json / pager_json
-#include "compress.hpp"      // apply_fingerprints / minify_html / wrap_webp
+#include "compress.hpp"      // finalize_html
 #include "i18n.hpp"          // i18n_replace / dict_to_json
 #include "feeds.hpp"         // gen_feeds
 #include "pwa.hpp"           // gen_pwa
@@ -14,6 +15,7 @@
 #include "pages.hpp"        // TocResult / toc 提取 / find_path
 #include "shortcode.hpp"    // render_doc_body（正文完整管线）
 #include <fstream>
+#include <functional>   // std::hash（增量标签/市场签名）
 #include <sstream>
 #include <mutex>
 
@@ -75,7 +77,7 @@ json build_head_data(BuildContext& b, const LocaleRenderCtx& rc,
         std::string upRss;
         for (int k = 0; k < depth; ++k) upRss += "../";
         hd["links"].push_back(json{{"rel", "manifest"}, {"href", upRss + "manifest.webmanifest"}, {"attrs", ""}});
-        hd["meta"]["names"].push_back(json{{"name", "theme-color"}, {"content", "#a8332a"}});
+        hd["meta"]["names"].push_back(json{{"name", "theme-color"}, {"content", theme_color()}});
         if (rc.hasFeed)   // 有博客订阅流才输出 RSS alternate（无 feed 时不引 404）
             hd["links"].push_back(json{{"rel", "alternate"}, {"href", upRss + "rss.xml"},
                                        {"attrs", " type=\"application/rss+xml\" title=\"" + esc_attr(rc.feedTitle) + "\""}});
@@ -174,7 +176,8 @@ void render_home(BuildContext& b, const LocaleRenderCtx& rc) {
         }
         std::string landing = map_render_page(cfg, opt, ctx, type_for_mode(rc.maps, "home", "home"), true);
         std::ofstream(rc.locOut / "index.html")
-            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(landing, rc.dict)), rc.locOut) : i18n_replace(landing, rc.dict));
+            << finalize_html(landing, rc.dict, rc.locOut, cfg.compress);
+        { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig["index|" + rc.curLocale] = "1"; }
     }
 }
 
@@ -206,7 +209,6 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
     // 仅当有插件注册 on_page_rendered 时才退化串行（该钩子依赖页面写出时序与安全）；
     // 其余插件（on_config/on_data_query 等）不参与页面渲染，无需牺牲并行。
     bool hasPlugs = plugins_hook_registered("on_page_rendered");
-    std::mutex sigMutex;                       // pageSig 并发读写保护
     std::vector<char> skip(pages.size(), 0);   // 增量跳过标记（阶段 2 复用）
     // 阶段 1 产物暂存（并发下各线程只写自己索引，安全；阶段 2 只读自身索引）
     std::vector<std::string> tocHtml(pages.size()), tocNav(pages.size());
@@ -229,9 +231,9 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
         if (stat(f.string().c_str(), &fst) == 0) {
             sig = std::to_string(fst.st_mtime) + ":" + std::to_string((long long)fst.st_size);
             std::string key = pages[i].file + "|" + (multi ? loc : "");
-            if (b.incremental && !b.globalDirty) {
+            if (b.incremental) {
                 fs::path existingOut = rc.locOut / (pages[i].file + ".html");
-                std::lock_guard<std::mutex> lk(sigMutex);
+                std::lock_guard<std::mutex> lk(g_page_sig_mtx);
                 auto it = b.pageSig.find(key);
                 if (it != b.pageSig.end() && it->second == sig && fs::exists(existingOut)) {
                     skip[i] = 1;
@@ -241,7 +243,7 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
                 }
                 b.pageSig[key] = sig;   // 记录本次指纹（全量/增量一致）
             } else {
-                std::lock_guard<std::mutex> lk(sigMutex);
+                std::lock_guard<std::mutex> lk(g_page_sig_mtx);
                 b.pageSig[key] = sig;
             }
         }
@@ -321,7 +323,7 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
         }
         // 文档页 → PageCtx（地图模式数据）
         PageCtx ctx;
-        ctx.nav_groups = nav_groups_json(cfg.nav, pages[i].file, relBase);
+        ctx.nav_groups = nav_groups_json(cfg.nav, pages[i].file, relBase, rc.curLocale);
         ctx.toc_items = tocItemsStore[i];
         ctx.pager = pager_json(pages, i, relBase);
         ctx.breadcrumb_map = crumbsMapStore[i];
@@ -342,7 +344,7 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
         std::error_code pe2;
         fs::create_directories(pageOut.parent_path(), pe2);   // 子目录路由需建父目录
         std::ofstream(pageOut)
-            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, rc.dict)), rc.locOut) : i18n_replace(page, rc.dict));
+            << finalize_html(page, rc.dict, rc.locOut, cfg.compress);
         // front matter aliases：为每个旧路径生成重定向页（canonical + meta refresh + JS 兜底，
         // 对标 Hugo aliases —— 文档改名后旧链接自动指向新页）
         for (const auto& a : pages[i].aliases) {
@@ -417,31 +419,70 @@ void render_blog(BuildContext& b, const LocaleRenderCtx& rc) {
             }
         }
         fs::create_directories(rc.locOut / "blog", ec);
-        // 文章渲染顺序由插件 blog_order（有序 file 列表）决定；引擎只做渲染
+        // 文章渲染顺序由插件 blog_order（有序 file 列表）决定；引擎只做渲染。
+        // 并行化：预收集有效索引后 run_parallel，每线程独立读写不同文件（安全）。
         std::map<std::string, Page> pgMap;
         for (const auto& bp : b.blog_posts) pgMap[bp.file] = bp;
         const auto& qOrder = b.query_out["blog_order"];
+        // 预筛有效索引（文件存在 + 非草稿/草稿含入）+ 增量跳过（源 .md 未变则复用产物）
+        std::vector<size_t> valid;
+        std::vector<std::string> validRel;
         for (size_t bi = 0; bi < qOrder.size(); ++bi) {
             auto pit = pgMap.find(qOrder[bi].get<std::string>());
             if (pit == pgMap.end()) continue;
-            Page p = pit->second;
-            if (p.draft && !b.includeDrafts) continue;
-            std::string rel = p.file.substr(5);          // "blog/xxx" → "xxx"
+            if (pit->second.draft && !b.includeDrafts) continue;
+            std::string rel = pit->second.file.substr(5);
             fs::path f = blogDir / (rel + ".md");
             if (multi) {
                 fs::path fl = blogDir / (rel + "." + loc + ".md");
                 if (fs::exists(fl)) f = fl;
             }
             if (!fs::exists(f)) continue;
+            // 增量指纹（与 render_doc_pages 同逻辑）
+            struct stat fst;
+            std::string sig;
+            if (stat(f.string().c_str(), &fst) == 0)
+                sig = std::to_string(fst.st_mtime) + ":" + std::to_string((long long)fst.st_size);
+            std::string key = pit->second.file + "|" + (multi ? loc : "");
+            if (b.incremental) {
+                fs::path existingOut = rc.locOut / "blog" / (rel + ".html");
+                auto it = b.pageSig.find(key);
+                if (it != b.pageSig.end() && it->second == sig && fs::exists(existingOut)) {
+                    // 复用已有产物；记录 sig 供清理残留使用
+                    { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[key] = sig; }
+                    if (g_verbose)
+                        std::cout << color::muted("  [incr] 跳过未变化: ") << pit->second.file << "\n";
+                    continue;
+                }
+            }
+            { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[key] = sig; }
+            valid.push_back(bi);
+            validRel.push_back(rel);
+        }
+        // 产物暂存（并发写各自索引，线程安全）
+        std::vector<std::string> blogBody(valid.size()), blogMeta(valid.size()),
+                                 blogTitle(valid.size()), blogDesc(valid.size());
+        std::vector<json> blogTocItems(valid.size()), blogBcMap(valid.size()),
+                          blogPagerBj(valid.size()), blogHd(valid.size());
+        auto blog_content = [&](size_t vi) {
+            size_t bi = valid[vi];
+            const std::string& rel = validRel[vi];
+            auto pit = pgMap.find(qOrder[bi].get<std::string>());
+            Page p = pit->second;
+            fs::path f = blogDir / (rel + ".md");
+            if (multi) {
+                fs::path fl = blogDir / (rel + "." + loc + ".md");
+                if (fs::exists(fl)) f = fl;
+            }
             std::string mdRaw = read_file(f);
             std::string md;
             parse_front_matter(mdRaw, md);
-            p.html = render_doc_body(md, false);   // blog 正文跨语言共享，用默认中文标题
+            p.html = render_doc_body(md, false);
             if (p.title.empty()) p.title = extract_title(md, rel);
             std::string excerpt = collapse_ws(strip_tags(p.html));
             if (excerpt.size() > 160) excerpt = truncate_utf8(excerpt, 160) + "…";
             p.desc = excerpt;
-            // 面包屑数据（Breadcrumb 组件；博客详情页在 blog/ 下，链接相对本目录）
+            // 面包屑
             json bcJson = json::array();
             bcJson.push_back(json{{"title", "{{home}}"}, {"href", "../index.html"}, {"current", false}});
             bcJson.push_back(json{{"title", "{{navBlog}}"}, {"href", "index.html"}, {"current", false}});
@@ -455,17 +496,16 @@ void render_blog(BuildContext& b, const LocaleRenderCtx& rc) {
                 else bcMap["texts"].push_back(item);
             }
             if (!bcMap.contains("current")) bcMap["current"] = "";
-            // 元信息：发布日期 + 阅读时长（纯文本，LastUpdated 组件包 <div class="page-meta">）
+            // 元信息
             auto [cjk, words] = count_words(strip_tags(p.html));
             int mins = (int)std::ceil(cjk / 300.0 + words / 200.0);
             if (mins < 1) mins = 1;
-            std::string pub = format_date_local(p.dateT);   // 本地时区，避免 UTC 倒退一天
+            std::string pub = format_date_local(p.dateT);
             std::string rt = rc.dict.count("readingTime") ? rc.dict.at("readingTime")
                                                         : "约 {{minutes}} 分钟阅读（{{words}} 字）";
             rt = subst_tokens(rt, {{"minutes", std::to_string(mins)}, {"words", std::to_string(cjk + words)}});
             std::string meta = esc(pub) + " · " + rt;
-            // 上下篇数据（博客邻篇，缺位置灰——行业标准；链接相对 blog/ 目录）
-            // 邻篇 = 插件排序结果的前后项（机械索引，非查询）
+            // 上下篇 pager（邻篇查找基于 qOrder 原序，只读安全）
             json pagerBj;
             pagerBj["show"] = (bi > 0) || (bi + 1 < qOrder.size());
             if (bi > 0) {
@@ -482,44 +522,56 @@ void render_blog(BuildContext& b, const LocaleRenderCtx& rc) {
                                            {"href", nit->second.file.substr(5) + ".html"}};
                 else pagerBj["next"] = json{{"show", false}};
             } else pagerBj["next"] = json{{"show", false}};
-            // head 数据化（MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）
+            // head + toc
             json hd = build_head_data(b, rc, p.file, 1, p.title, p.desc, p.dateT, p.dateT, true, {}, "", "");
             TocResult t = build_toc(p.html);
-            // 博客详情页 → PageCtx
+            // 暂存（含 title/desc——p 是值拷贝，跨阶段不可取用）
+            blogBody[vi] = t.html;
+            blogMeta[vi] = meta;
+            blogTitle[vi] = p.title;
+            blogDesc[vi] = p.desc;
+            blogTocItems[vi] = t.items;
+            blogBcMap[vi] = bcMap;
+            blogPagerBj[vi] = pagerBj;
+            blogHd[vi] = hd;
+        };
+        auto blog_emit = [&](size_t vi) {
             PageCtx ctx;
-            ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../");
-            ctx.head_meta = hd.value("meta", json::object());
-            ctx.head_links = hd.value("links", json::array());
-            ctx.jsonld = hd.value("jsonld", "");
-            ctx.toc_items = t.items;
-            ctx.pager = pagerBj;
-            ctx.breadcrumb_map = bcMap;
+            ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", "../", rc.curLocale);
+            ctx.head_meta = blogHd[vi].value("meta", json::object());
+            ctx.head_links = blogHd[vi].value("links", json::array());
+            ctx.jsonld = blogHd[vi].value("jsonld", "");
+            ctx.toc_items = blogTocItems[vi];
+            ctx.pager = blogPagerBj[vi];
+            ctx.breadcrumb_map = blogBcMap[vi];
             ctx.edit = json{{"show", false}};
-            ctx.body = t.html;
-            ctx.title = p.title;
-            ctx.desc = p.desc;
-            ctx.last_updated = meta;
+            ctx.body = blogBody[vi];
+            ctx.title = blogTitle[vi];
+            ctx.desc = blogDesc[vi];
+            ctx.last_updated = blogMeta[vi];
             auto beIt2 = g_body_ends.find(rc.curLocale);
             ctx.body_end = (beIt2 != g_body_ends.end()) ? beIt2->second : "";
             ctx.curLocale = rc.curLocale; ctx.lang_data = rc.langData;
             ctx.i18nJson = rc.i18nJson; ctx.relBase = "../";
             std::string page = map_render_page(cfg, opt, ctx, type_for_mode(rc.maps, "blog-post", "blog-post"));
-            std::ofstream(rc.locOut / "blog" / (rel + ".html"))
-                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, rc.dict)), rc.locOut) : i18n_replace(page, rc.dict));
-        }
-        // 列表页 + 分页：第一页 blog/index.html，后续 blog/page/N.html
-        // （列表页在 blog/ 下 relBase="../"；分页页在 blog/page/ 下 relBase="../../"）
-        // 分页分组由插件 blog_pages 决定（每页 file 数组）；引擎只渲染 + 生成分页导航
+            std::ofstream(rc.locOut / "blog" / (validRel[vi] + ".html"))
+                << finalize_html(page, rc.dict, rc.locOut, cfg.compress);
+        };
+        run_parallel(valid.size(), blog_content);
+        run_parallel(valid.size(), blog_emit);
+        // 列表页 + 分页（并行）：每页独立写盘，安全并行 —— 复用 run_parallel
         {
             json qPages = b.query_out.value("blog_pages", json::array());
             if (!qPages.is_array()) qPages = json::array();
             size_t pagesN = qPages.size();
-            for (size_t pi = 0; pi < pagesN; ++pi) {
-                bool isPageSub = (pi > 0);                  // 分页页位于 blog/page/
+            if (pagesN == 0) return;
+            // 分页子目录前置创建（避免并行写时多线程竞争 mkdir）
+            fs::create_directories(rc.locOut / "blog" / "page", ec);
+            run_parallel(pagesN, [&](size_t pi) {
+                bool isPageSub = (pi > 0);
                 std::string relBase = isPageSub ? "../../" : "../";
-                std::string cardBase = isPageSub ? "../" : "";   // 卡片链接前缀
-                std::string navBase  = isPageSub ? "../" : "";   // 分页导航链接前缀
-                // 博客列表数据（BlogList/BlogCard 组件渲染；分页 BlogPager 数据化）
+                std::string cardBase = isPageSub ? "../" : "";
+                std::string navBase  = isPageSub ? "../" : "";
                 json posts = json::array();
                 for (const auto& fl : qPages[pi]) {
                     auto pit = pgMap.find(fl.get<std::string>());
@@ -543,25 +595,27 @@ void render_blog(BuildContext& b, const LocaleRenderCtx& rc) {
                     for (size_t pp = 0; pp < pagesN; ++pp)
                         bp["pages"].push_back(json{{"num", pp + 1}, {"href", pageHref(pp)}});
                 }
-                // 博客列表页 → PageCtx（BlogList/BlogCard/BlogPager 组件渲染）
                 PageCtx ctx;
                 ctx.blog_posts = posts;
                 ctx.blog_pager = bp;
                 ctx.title = "{{blogTitle}}";
                 ctx.desc = cfg.description;
-            ctx.curLocale = rc.curLocale; ctx.lang_data = rc.langData;
-            ctx.i18nJson = rc.i18nJson; ctx.relBase = relBase;
-            ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase);
-            std::string page = map_render_page(cfg, opt, ctx, type_for_mode(rc.maps, "blog-list", "blog"));
-                if (pi == 0)
+                ctx.curLocale = rc.curLocale; ctx.lang_data = rc.langData;
+                ctx.i18nJson = rc.i18nJson; ctx.relBase = relBase;
+                ctx.nav_groups = nav_groups_json(b.blogNav.empty() ? cfg.nav : b.blogNav, "", relBase, rc.curLocale);
+                std::string page = map_render_page(cfg, opt, ctx, type_for_mode(rc.maps, "blog-list", "blog"));
+                if (pi == 0) {
                     std::ofstream(rc.locOut / "blog" / "index.html")
-                        << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, rc.dict)), rc.locOut) : i18n_replace(page, rc.dict));
-                else {
-                    fs::create_directories(rc.locOut / "blog" / "page", ec);
+                        << finalize_html(page, rc.dict, rc.locOut, cfg.compress);
+                    std::string k = "blog/index|" + rc.curLocale;
+                    { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[k] = "1"; }
+                } else {
                     std::ofstream(rc.locOut / "blog" / "page" / (std::to_string(pi + 1) + ".html"))
-                        << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(page, rc.dict)), rc.locOut) : i18n_replace(page, rc.dict));
+                        << finalize_html(page, rc.dict, rc.locOut, cfg.compress);
+                    std::string k = "blog/page/" + std::to_string(pi + 1) + "|" + rc.curLocale;
+                    { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[k] = "1"; }
                 }
-            }
+            });
         }
     }
 }
@@ -595,41 +649,38 @@ void render_search_index(BuildContext& b, const LocaleRenderCtx& rc) {
     }
 }
 
+// 标签聚合页 + 每标签单页（数据来自内置标签聚合或 tags-query 插件）。
+// 总览页 1 张（串行），标签单页 N 张（并行 —— 复用 run_parallel）。
 void render_tags(BuildContext& b, const LocaleRenderCtx& rc) {
-
     const SiteConfig& cfg = b.cfg;
-    const I18nCfg& i18n = b.i18n;
-    std::vector<Page>& pages = b.pages;
     const RenderOpts& opt = b.opt;
-    const fs::path& out_dir = b.out_dir;
-    fs::path in_dir = b.in_dir;
-    const bool includeDrafts = b.includeDrafts;
-    const json& maps = rc.maps;
-    const I18nDict& dict = rc.dict;
-    const std::string& i18nJson = rc.i18nJson;
-    const std::string& curLocale = rc.curLocale;
-    const std::string& homeBase = rc.homeBase;
-    const std::string& feedTitle = rc.feedTitle;
-    const std::string& ogImageUrl = rc.ogImageUrl;
-    const json& langData = rc.langData;
-    const bool multi = i18n.enabled;
     std::error_code ec;
-    const std::string& loc = rc.curLocale;
-    const fs::path& locOut = rc.locOut;
-    // 9) 标签聚合页：基于 front matter 的 tags，自动生成每个标签一个列表页 + 总览页
-    //    （tags 页位于 tags/ 子目录：relBase="../"；博客文章也参与聚合，链接 ../blog/xxx.html）
-    {
-        if (b.query_ready && b.query_out.contains("tags") && b.query_out["tags"].is_array()
-            && !b.query_out["tags"].empty()) {
-            fs::create_directories(rc.locOut / "tags", ec);
-            // 标签聚合由插件完成（tags 数组 + tag_pages 每标签 file 列表）；引擎只渲染
-            std::map<std::string, const Page*> pgMap;
-            for (const auto& p : pages) pgMap[p.file] = &p;
-            for (const auto& p : b.blog_posts) pgMap[p.file] = &p;
-            json tags = b.query_out["tags"];
-            // tags 聚合页 → PageCtx（TagOverview/TagItem 组件渲染）
+    if (!b.query_ready || !b.query_out.contains("tags") || !b.query_out["tags"].is_array()
+        || b.query_out["tags"].empty())
+        return;
+    fs::create_directories(rc.locOut / "tags", ec);
+    // 文件→Page 查询表（只读，多线程安全）
+    std::map<std::string, const Page*> pgMap;
+    for (const auto& p : b.pages) pgMap[p.file] = &p;
+    for (const auto& p : b.blog_posts) pgMap[p.file] = &p;
+    json tags = b.query_out["tags"];
+    // 生成标签数据签名（含标签列表 + 每标签文件分配）→ 未变化则跳过
+    std::string tagsOverviewSig = std::to_string(std::hash<std::string>{}(
+        tags.dump() + b.query_out.value("tag_pages", json::object()).dump()));
+
+    // 标签总览页（tags/index.html，仅 1 页，增量可跳过）
+    std::string ovKey = "tags/index|" + rc.curLocale;
+    if (b.incremental) {
+        auto it = b.pageSig.find(ovKey);
+        if (it != b.pageSig.end() && it->second == tagsOverviewSig
+            && fs::exists(rc.locOut / "tags" / "index.html")) {
+            { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[ovKey] = tagsOverviewSig; }
+        } else goto render_tags_overview;
+    } else {
+render_tags_overview:
+        {
             PageCtx ctx;
-            ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
+            ctx.nav_groups = nav_groups_json(cfg.nav, "", "../", rc.curLocale);
             ctx.tags = tags;
             ctx.title = "{{allTags}}";
             ctx.desc = cfg.description;
@@ -637,36 +688,52 @@ void render_tags(BuildContext& b, const LocaleRenderCtx& rc) {
             ctx.i18nJson = rc.i18nJson; ctx.relBase = "../";
             std::string ov = map_render_page(cfg, opt, ctx, type_for_mode(rc.maps, "tags", "tags"));
             std::ofstream(rc.locOut / "tags" / "index.html")
-                << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, rc.dict)), rc.locOut) : i18n_replace(ov, rc.dict));
-            const json& tagPages = b.query_out.contains("tag_pages")
-                                    ? b.query_out["tag_pages"] : json::object();
-            for (auto it = tagPages.begin(); it != tagPages.end(); ++it) {
-                const std::string& tname = it.key();
-                // 标签单页数据（TagPage/TagDocItem 组件渲染；docs 顺序由插件给出）
-                json docs = json::array();
-                for (const auto& fl : it.value()) {
-                    auto pit = pgMap.find(fl.get<std::string>());
-                    if (pit == pgMap.end()) continue;
-                    const Page& p = *pit->second;
-                    std::string d = (p.file.size() > 5 && p.file.compare(0, 5, "blog/") == 0)
-                                    ? format_date_local(p.dateT) : "";
-                    docs.push_back(json{{"href", "../" + p.file + ".html"}, {"title", p.title},
-                                        {"date", d}, {"desc", std::string()}});
-                }
-                PageCtx tctx;
-                tctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
-                tctx.tag_name = tname;
-                tctx.tag_docs = docs;
-                tctx.title = "#" + tname;
-                tctx.desc = cfg.description;
-                tctx.curLocale = rc.curLocale; tctx.lang_data = rc.langData;
-                tctx.i18nJson = rc.i18nJson; tctx.relBase = "../";
-                std::string tp = map_render_page(cfg, opt, tctx, type_for_mode(rc.maps, "tag-page", "tag-page"));
-                std::ofstream(rc.locOut / "tags" / (slugify(tname) + ".html"))
-                    << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(tp, rc.dict)), rc.locOut) : i18n_replace(tp, rc.dict));
-            }
+                << finalize_html(ov, rc.dict, rc.locOut, cfg.compress);
+            { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[ovKey] = tagsOverviewSig; }
         }
     }
+    // 每标签单页（tags/<slug>.html，增量跳过 + 并行）
+    const json& tagPages = b.query_out.contains("tag_pages")
+                            ? b.query_out["tag_pages"] : json::object();
+    std::vector<std::string> tagNames;
+    for (auto it = tagPages.begin(); it != tagPages.end(); ++it)
+        tagNames.push_back(it.key());
+    if (tagNames.empty()) return;
+    run_parallel(tagNames.size(), [&](size_t i) {
+        const std::string& tname = tagNames[i];
+        std::string k = "tags/" + slugify(tname) + "|" + rc.curLocale;
+        std::string tagSig = std::to_string(std::hash<std::string>{}(tagPages[tname].dump()));
+        if (b.incremental) {
+            auto it = b.pageSig.find(k);
+            if (it != b.pageSig.end() && it->second == tagSig
+                && fs::exists(rc.locOut / "tags" / (slugify(tname) + ".html"))) {
+                { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[k] = tagSig; }
+                return;
+            }
+        }
+        json docs = json::array();
+        for (const auto& fl : tagPages[tname]) {
+            auto pit = pgMap.find(fl.get<std::string>());
+            if (pit == pgMap.end()) continue;
+            const Page& p = *pit->second;
+            std::string d = (p.file.size() > 5 && p.file.compare(0, 5, "blog/") == 0)
+                            ? format_date_local(p.dateT) : "";
+            docs.push_back(json{{"href", "../" + p.file + ".html"}, {"title", p.title},
+                                {"date", d}, {"desc", std::string()}});
+        }
+        PageCtx tctx;
+        tctx.nav_groups = nav_groups_json(cfg.nav, "", "../", rc.curLocale);
+        tctx.tag_name = tname;
+        tctx.tag_docs = docs;
+        tctx.title = "#" + tname;
+        tctx.desc = cfg.description;
+        tctx.curLocale = rc.curLocale; tctx.lang_data = rc.langData;
+        tctx.i18nJson = rc.i18nJson; tctx.relBase = "../";
+        std::string tp = map_render_page(cfg, opt, tctx, type_for_mode(rc.maps, "tag-page", "tag-page"));
+        std::ofstream(rc.locOut / "tags" / (slugify(tname) + ".html"))
+            << finalize_html(tp, rc.dict, rc.locOut, cfg.compress);
+        { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[k] = tagSig; }
+    });
 }
 
 // 插件市场 / 主题市场页（数据来自 .Cdocs/data/*-market.json 站点数据，
@@ -676,12 +743,31 @@ void render_markets(BuildContext& b, const LocaleRenderCtx& rc) {
     const RenderOpts& opt = b.opt;
     const json& maps = rc.maps;
     const I18nDict& dict = rc.dict;
-    std::error_code ec;
     struct Mkt { const char* type; const char* mode; const char* title; };
-    for (const auto& m : { Mkt{"plugin-market", "plugin-market", "插件市场"},
-                           Mkt{"theme-market", "theme-market", "主题市场"} }) {
+    std::vector<Mkt> mkts = {{"plugin-market", "plugin-market", "插件市场"},
+                             {"theme-market", "theme-market", "主题市场"}};
+    run_parallel(mkts.size(), [&](size_t i) {
+        const auto& m = mkts[i];
+        // 市场数据文件 mtime 签名 → 增量跳过
+        std::string mkSig;
+        {
+            fs::path df = g_engine / "data" / (std::string(m.type) + ".json");
+            struct stat st;
+            if (stat(df.string().c_str(), &st) == 0)
+                mkSig = std::to_string(st.st_mtime);
+        }
+        std::string k = std::string(m.type) + "/index|" + rc.curLocale;
+        if (b.incremental && !mkSig.empty()) {
+            auto it = b.pageSig.find(k);
+            if (it != b.pageSig.end() && it->second == mkSig
+                && fs::exists(rc.locOut / m.type / "index.html")) {
+                { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[k] = mkSig; }
+                return;
+            }
+        }
+        std::error_code ec;
         PageCtx ctx;
-        ctx.nav_groups = nav_groups_json(cfg.nav, "", "../");
+        ctx.nav_groups = nav_groups_json(cfg.nav, "", "../", rc.curLocale);
         ctx.title = m.title;
         ctx.desc = cfg.description;
         ctx.curLocale = rc.curLocale; ctx.lang_data = rc.langData;
@@ -689,9 +775,9 @@ void render_markets(BuildContext& b, const LocaleRenderCtx& rc) {
         std::string ov = map_render_page(cfg, opt, ctx, type_for_mode(maps, m.mode, m.type));
         fs::create_directories(rc.locOut / m.type, ec);
         std::ofstream(rc.locOut / m.type / "index.html")
-            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(ov, rc.dict)), rc.locOut)
-                                               : i18n_replace(ov, rc.dict));
-    }
+            << finalize_html(ov, rc.dict, rc.locOut, cfg.compress);
+        { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[k] = mkSig; }
+    });
 }
 
 void render_single(BuildContext& b, const LocaleRenderCtx& rc) {
@@ -717,20 +803,26 @@ void render_single(BuildContext& b, const LocaleRenderCtx& rc) {
     const fs::path& locOut = rc.locOut;
     // 10) single 通用单页（rc.maps 注册表 mode=single：404 + 第三方自定义单页统一入口。
     //     output 自定输出文件名（默认 <type>.html）；页面结构/内容由地图 + 地图 data + props 完全自定义）
-    for (const auto& e : rc.maps) {
-        if (!e.is_object() || e.value("mode", "") != "single") continue;
+    std::vector<json> singles;
+    for (const auto& e : rc.maps)
+        if (e.is_object() && e.value("mode", "") == "single")
+            singles.push_back(e);
+    if (singles.empty()) return;
+    run_parallel(singles.size(), [&](size_t i) {
+        const auto& e = singles[i];
         std::string stype = e.value("type", "");
-        if (stype.empty()) continue;
         std::string output = e.value("output", "");
         if (output.empty()) output = stype + ".html";
         PageCtx ctx;
-        ctx.nav_groups = nav_groups_json(cfg.nav, "", "");
+        ctx.nav_groups = nav_groups_json(cfg.nav, "", "", rc.curLocale);
         ctx.title = (stype == "404") ? "404" : cfg.title;
         ctx.desc = cfg.description;
         ctx.curLocale = rc.curLocale; ctx.lang_data = rc.langData; ctx.i18nJson = rc.i18nJson;
         std::string sp = map_render_page(cfg, opt, ctx, stype);
         std::ofstream(rc.locOut / output)
-            << apply_fingerprints(cfg.compress ? wrap_webp(minify_html(i18n_replace(sp, rc.dict)), rc.locOut) : i18n_replace(sp, rc.dict));
-    }
+            << finalize_html(sp, rc.dict, rc.locOut, cfg.compress);
+        std::string k = output + "|" + rc.curLocale;
+        { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig[k] = "1"; }
+    });
 }
 

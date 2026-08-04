@@ -7,6 +7,9 @@
 // 主题根目录（g_engine/theme，缺失则 g_engine）
 fs::path theme_root();
 
+// 主题色（theme.json theme_color 字段，默认 #a8332a）
+const std::string& theme_color();
+
 // 警告去重（缺失/循环/深度，每键一次；正文渲染多线程安全）
 bool comp_warned_once(const std::string& k);
 
@@ -30,5 +33,8 @@ std::string compose_page(const std::string& mapName, const json& data);
 
 // 站点数据（.Cdocs/data/*.json 合并；双检锁，多线程安全）
 const json& site_data();
+
+// 预加载所有组件 HTML（构建启动时调用一次，消除每页递归文件搜索开销）
+void preload_components();
 
 #endif  // CDOCS_COMPONENT_HPP

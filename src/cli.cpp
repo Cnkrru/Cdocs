@@ -131,7 +131,7 @@ static int h_init(const std::vector<std::string>& args) {
     }
     bool noEngine = p.flags.count("--no-engine") > 0;
     bool defs = p.flags.count("--defaults") > 0 || p.flags.count("-y") > 0;
-    return cmd_init(p.pos[0], !noEngine, defs);
+    return cmd_init(p.pos[0], false, defs);  // exe 已挂 PATH，无需复制
 }
 
 static int h_new(const std::vector<std::string>& args) {

@@ -208,7 +208,24 @@ static std::string render_shortcode(int idx, bool en, ScState& st) {
     return res;
 }
 
-// 渲染后：占位 token → 组件渲染结果（嵌套深度上限 16）
+// 内联 style 去重：从组件渲染结果中提取 <style> 块，仅首次出现时保留
+static std::string strip_dup_styles(const std::string& html, ScState& st) {
+    std::string out; out.reserve(html.size());
+    size_t pos = 0;
+    while (true) {
+        size_t s = html.find("<style", pos);
+        if (s == std::string::npos) { out += html.substr(pos); break; }
+        size_t e = html.find("</style>", s);
+        if (e == std::string::npos) { out += html.substr(pos); break; }
+        out += html.substr(pos, s - pos);
+        std::string block = html.substr(s, e + 8 - s);
+        if (st.emitted.insert(block).second) out += block;
+        pos = e + 8;
+    }
+    return out;
+}
+
+// 渲染后：占位 token → 组件渲染结果（嵌套深度上限 16）+ 内联 style 去重
 static std::string expand_shortcodes(const std::string& html, bool en, ScState& st) {
     std::string out;
     out.reserve(html.size() + 256);
@@ -225,7 +242,7 @@ static std::string expand_shortcodes(const std::string& html, bool en, ScState& 
                 try { idx = std::stoi(html.substr(e0, e1 - e0)); } catch (...) {}
                 if (idx >= 0 && depth < 16) {
                     ++depth;
-                    out += render_shortcode(idx, en, st);
+                    out += strip_dup_styles(render_shortcode(idx, en, st), st);
                     --depth;
                     i = e1 + 2;
                     continue;
@@ -238,11 +255,9 @@ static std::string expand_shortcodes(const std::string& html, bool en, ScState& 
     return out;
 }
 
-// 正文完整管线（shortcode 预扫描 → md4c → admonitions → shortcode 展开）
+// 正文完整管线（shortcode 预扫描 → md4c → admonitions → shortcode 展开 + 内联 style 去重）
 std::string render_doc_body(const std::string& md, bool en) {
-    ScState st;   // 栈上状态：每篇文档独立，多线程渲染天然隔离
+    ScState st;
     std::string md2 = prescan_shortcodes(md, st);
-    // style 去重必须在最终输出做一次（而非组件级）：嵌套组件的 style 嵌在父组件内，
-    // 组件级去重会把父组件内部的子组件 style 误删
-    return dedup_style_blocks(expand_shortcodes(render_admonitions(markdown_to_html(md2), en), en, st), st);
+    return expand_shortcodes(render_admonitions(markdown_to_html(md2), en), en, st);
 }

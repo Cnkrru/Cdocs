@@ -36,16 +36,6 @@
       "mode": "single",
       "output": "404.html"
     },
-    {
-      "type": "plugin-market",
-      "map": "map/plugin-market.json",
-      "mode": "plugin-market"
-    },
-    {
-      "type": "theme-market",
-      "map": "map/theme-market.json",
-      "mode": "theme-market"
-    }
   ],
   "templates": {
     "base": "map/base.json"

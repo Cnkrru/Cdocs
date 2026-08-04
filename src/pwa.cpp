@@ -1,7 +1,8 @@
 // pwa.cpp —— PWA manifest / service worker 生成实现（自 main.cpp 原样搬迁）
 
 #include "pwa.hpp"
-#include "core.hpp"   // g_fp（资源指纹 map）
+#include "component.hpp"  // theme_color
+#include "core.hpp"        // g_fp（资源指纹 map）
 
 // PWA：复制 sw.js + icon.svg，并写 manifest.webmanifest（替代外部 gen-pwa.js）
 void gen_pwa(const fs::path& out, const SiteConfig& cfg, const std::string& siteName,
@@ -39,7 +40,7 @@ void gen_pwa(const fs::path& out, const SiteConfig& cfg, const std::string& site
     m["scope"] = "./";
     m["display"] = "standalone";
     m["background_color"] = "#f5f1e8";
-    m["theme_color"] = "#a8332a";
+    m["theme_color"] = theme_color();
     json icon;
     icon["src"] = "./icon.svg";
     icon["sizes"] = "any";

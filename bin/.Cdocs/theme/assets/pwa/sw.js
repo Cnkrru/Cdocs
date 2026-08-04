@@ -4,7 +4,7 @@
  * 跨域请求（如外部 RSS）直接放行，不缓存
  * 版本升级（v1→v2）时旧的整块 app.js 缓存会被清掉，改用模块化 ES Module 入口。
  */
-const CACHE = 'cdocs-v2';
+const CACHE = 'cdocs-v3';
 const CORE = [
   './',
   './index.html',

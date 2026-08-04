@@ -10,6 +10,7 @@
 #include "pwa.hpp"          // gen_pwa
 #include "i18n.hpp"         // i18n_replace
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <regex>
 #include <set>
@@ -32,6 +33,8 @@ void write_root_redirect(BuildContext& b) {
             "  <link rel=\"canonical\" href=\"./" << esc_attr(target) << "\">\n"
             "</head>\n<body>\n  <p>正在跳转到 <a href=\"./" << esc_attr(target) << "\">"
             << esc(i18n.defaultLocale) << "</a> …</p>\n</body>\n</html>\n";
+        // 标记到 pageSig，防止 stale 清理误删（index.html 不由页面渲染产出）
+        { std::lock_guard<std::mutex> lk(g_page_sig_mtx); b.pageSig["index|"] = "1"; }
     }
 }
 

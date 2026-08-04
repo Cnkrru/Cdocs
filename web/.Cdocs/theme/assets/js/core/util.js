@@ -42,21 +42,24 @@ export function loadCSSOnce(href) {
   document.head.appendChild(l);
 }
 
+// 页面由 C++ 注入 window.__cdocs_asset_root（如 ../assets/ 或 assets/）
+function assetPath(rel) { return (window.__cdocs_asset_root || 'assets/') + rel; }
+
 export function loadMermaid() {
-  return loadScriptOnce('assets/deps/mermaid.min.js').then(function () {
+  return loadScriptOnce(assetPath('deps/mermaid.min.js')).then(function () {
     if (typeof mermaid === 'undefined') throw new Error('mermaid not loaded');
     return mermaid;
   });
 }
 
 export function loadKaTeX() {
-  loadCSSOnce('assets/deps/katex.min.css');
-  return loadScriptOnce('assets/deps/katex.min.js').then(function () {
+  loadCSSOnce(assetPath('deps/katex.min.css'));
+  return loadScriptOnce(assetPath('deps/katex.min.js')).then(function () {
     if (typeof katex === 'undefined') throw new Error('katex not loaded');
     return katex;
   });
 }
 
 export function loadAutoRender() {
-  return loadScriptOnce('assets/deps/auto-render.min.js');
+  return loadScriptOnce(assetPath('deps/auto-render.min.js'));
 }

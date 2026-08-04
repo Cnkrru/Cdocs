@@ -19,12 +19,17 @@
 #include "compress.hpp"
 #include "linkcheck.hpp"
 #include <algorithm>   // std::find（i18n 缺失键去重）
+#include <map>         // 标签聚合（内置标签查询）
 #include <set>         // 版本化导航过滤（当前版本已生成页面集合）
+#include <future>      // std::async（feeds/sitemap 与渲染并行）
 #include <thread>      // Hugo 式并发渲染：worker pool
 #include <mutex>       // pageSig 并发写保护
 #include <atomic>      // 任务计数器
 #include <cstdio>
+#include <cstdlib>     // std::system（robocopy）
 #include <regex>       // L2 残留检测：{{}} 模板块 / 数据键 / 组件标签正则扫描
+
+std::mutex g_page_sig_mtx;  // pageSig 并发写保护（在多个 render_*.cpp 中并行写入）
 
 // ---------------- 并发渲染 worker pool（Hugo 式：多核并行渲染页面） ----------------
 // tasks 数量 < 2 或单核时退化为顺序执行；每个工作线程从原子计数器取任务。
@@ -192,9 +197,87 @@ static int prepare_pages(BuildContext& b) {
             // 此处只做原始收集（目录扫描 + frontmatter 解析），不排序。
         }
     }
-    // 数据查询钩子：构建全部页面数据快照 → on_data_query 插件（Python 脚本聚合/排序/分页）。
-    // 引擎只产原始数据（收集/解析/渲染），查询逻辑 100% 由插件实现；
-    // 插件无输出或输出为空 = 纯文档站（无博客流/无标签页/首页无文章列表）。
+    // 内置标签聚合（替代 tags-query 插件）：从 pages + blog_posts 的 frontmatter tags
+    // 聚合全部标签，生成 {name, href} 列表 + 每标签有序文件列表，输出格式与插件一致。
+    // 插件钩子仍在下方，若 tags-query 插件存在会覆盖内置结果（值相同，向下兼容）。
+    {
+        std::map<std::string, std::vector<std::string>> tagMap;
+        auto collectTags = [&](const std::vector<Page>& v) {
+            for (const auto& p : v) {
+                if (p.draft) continue;
+                for (const auto& t : p.tags)
+                    tagMap[t].push_back(p.file);
+            }
+        };
+        collectTags(b.pages);
+        collectTags(b.blog_posts);
+        if (!tagMap.empty()) {
+            json tagsArr = json::array();
+            json tagPages = json::object();
+            std::vector<std::string> sortedTags;
+            for (const auto& kv : tagMap) sortedTags.push_back(kv.first);
+            std::sort(sortedTags.begin(), sortedTags.end());
+            // 博客按日期倒序：构建 date 查询表
+            std::map<std::string, std::time_t> dateMap;
+            for (const auto& bp : b.blog_posts) dateMap[bp.file] = bp.dateT;
+            for (const auto& name : sortedTags) {
+                tagsArr.push_back({{"name", name}, {"href", slugify(name) + ".html"}});
+                const auto& files = tagMap[name];
+                std::vector<std::string> blog, docs;
+                for (const auto& f : files) {
+                    if (f.size() > 5 && f.compare(0, 5, "blog/") == 0) blog.push_back(f);
+                    else docs.push_back(f);
+                }
+                std::sort(blog.begin(), blog.end(), [&](const std::string& a, const std::string& b) {
+                    return dateMap[a] > dateMap[b];
+                });
+                json filesArr = json::array();
+                for (const auto& f : blog) filesArr.push_back(f);
+                for (const auto& f : docs) filesArr.push_back(f);
+                tagPages[name] = filesArr;
+            }
+            b.query_out["tags"] = tagsArr;
+            b.query_out["tag_pages"] = tagPages;
+            b.query_ready = true;
+        }
+    }
+    // 内置博客查询（替代 blog-query 插件）：排序 + 分页 + 首页流。
+    // 输出格式与插件一致：blog_order（有序 file 列表）、blog_pages（每页 10 篇）、home_posts（前 8 篇）。
+    {
+        std::vector<const Page*> posts;
+        for (const auto& p : b.blog_posts)
+            if (!p.draft) posts.push_back(&p);
+        if (!posts.empty()) {
+            // 按 dateT 倒序；dateT 相同时回退 date 字符串再回退 file（与 Python 插件一致）
+            std::sort(posts.begin(), posts.end(), [](const Page* a, const Page* b) {
+                if (a->dateT != b->dateT) return a->dateT > b->dateT;
+                if (a->date != b->date) return a->date > b->date;
+                return a->file > b->file;
+            });
+            json order = json::array();
+            for (const auto* p : posts) order.push_back(p->file);
+            b.query_out["blog_order"] = order;
+            // 分页（10 篇/页）
+            const int perPage = 10;
+            json pages = json::array();
+            for (size_t i = 0; i < order.size(); i += perPage) {
+                json page = json::array();
+                size_t end = std::min(i + (size_t)perPage, order.size());
+                for (size_t j = i; j < end; ++j) page.push_back(order[j]);
+                pages.push_back(page);
+            }
+            b.query_out["blog_pages"] = pages;
+            // 首页文章流（前 8 篇）
+            const int homeTop = 8;
+            json home = json::array();
+            size_t n = std::min((size_t)homeTop, order.size());
+            for (size_t i = 0; i < n; ++i) home.push_back(order[i]);
+            b.query_out["home_posts"] = home;
+            b.query_ready = true;
+        }
+    }
+    // 数据查询钩子：构建全部页面数据快照 → on_data_query 插件。
+    // 引擎内置标签 + 博客查询（上方）；若插件存在会覆盖内置结果（向下兼容）。
     {
         json snap = json::array();
         auto push_snap = [&](const std::vector<Page>& v) {
@@ -291,9 +374,10 @@ std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
         {"last_updated", esc(pcx.last_updated)},
         {"body_end", pcx.body_end},
         {"skip_label", (pcx.curLocale == "en") ? "Skip to main content" : "跳到主要内容"},
-        {"footer", footer_json(cfg)},
+        {"footer", footer_json_cached(cfg)},
         {"backtop", json{{"show", opt.showBackToTop}, {"threshold", cfg.backToTopThreshold},
                          {"label", (cfg.backToTopLabel == "↑ 顶部") ? "{{backToTop}}" : esc_attr(cfg.backToTopLabel)}}},
+        {"asset_root", pcx.relBase + "assets/"},  // JS 动态加载静态资源的根路径
         {"scripts", json{{"highlight", opt.showCodeHighlight}, {"search", opt.showSearch},
                          {"i18n_json", pcx.i18nJson}, {"feedback", cfg.feedbackEndpoint}}}
     };
@@ -326,64 +410,67 @@ std::string type_for_mode(const json& maps, const std::string& mode, const std::
     return def;
 }
 
-static void render_one_locale(BuildContext& b, const json& maps, const std::string& loc,
-                         bool multi, const I18nDict& dict, std::time_t asig, bool assetsChanged) {
-    const SiteConfig& cfg = b.cfg;
-    const I18nCfg& i18n = b.i18n;
-    const I18nDict& fallbackUI = b.fallbackUI;
-    std::vector<Page>& pages = b.pages;   // 博客流可能回退 dateT（mtime）
-    const fs::path& out_dir = b.out_dir;
-    fs::path in_dir = b.in_dir;                 // 静态资源发布源（md/ 下非 Markdown 文件）
-    const RenderOpts& opt = b.opt;              // 渲染选项（压缩/指纹/地图渲染）
-    const bool includeDrafts = b.includeDrafts;
+// Windows 快速递归复制：robocopy 批量拷贝比 fs::copy 逐文件快 3-5 倍
+static void fast_copy_dir(const fs::path& src, const fs::path& dst) {
+#ifdef _WIN32
+    std::string cmd = "robocopy \"" + src.string() + "\" \"" + dst.string() + "\" /E /NJH /NJS /NP /NS /NC /NFL >nul 2>nul";
+    std::system(cmd.c_str());
+#else
     std::error_code ec;
-    std::string i18nJson = dict_to_json(dict);   // 注入页面，供 app.js 客户端文案本地化
-    std::string curLocale = loc;                 // 空 = 单语言（render_page 退化为 zh-CN）
-    fs::path locOut = out_dir;
-    if (multi) locOut = out_dir / loc;
+    fs::copy(src, dst, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+#endif
+}
+
+// 资产准备（复制主题+deps+静态文件+压缩+指纹）—— 串行执行，多 locale 共享
+static void setup_locale_assets(BuildContext& b, const std::string& loc, bool multi,
+                                bool assetsChanged) {
+    const SiteConfig& cfg = b.cfg;
+    const fs::path& out_dir = b.out_dir;
+    fs::path locOut = multi ? out_dir / loc : out_dir;
+    std::error_code ec;
     fs::create_directories(locOut, ec);
-    // 复制前端资源到本语言目录（相对链接 assets/... 在子目录内同样成立）
-    // 源签名变化或目标缺失 → 复制；40 个字体 ×2 语言是构建最大 I/O 大头，多数构建命中跳过。
     bool needAssets = assetsChanged || !fs::exists(locOut / "assets");
     if (g_verbose && !needAssets)
         std::cout << color::muted("  [incr] 跳过 assets 复制（源未变）\n");
     if (needAssets) {
         if (fs::exists(theme_root() / "assets"))
-            fs::copy(theme_root() / "assets", locOut / "assets", fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+            fast_copy_dir(theme_root() / "assets", locOut / "assets");
         else
             fs::create_directories(locOut / "assets", ec);
-        // 复制前端运行时依赖（deps/ 中的 JS·CSS 库）到 assets/deps
-        // 注意：deps/vendor 是 C++ 编译期头文件（md4c / nlohmann），不属于站点运行资源，不随站点发布
         if (fs::exists(g_engine / "deps")) {
             fs::create_directories(locOut / "assets" / "deps", ec);
+#ifdef _WIN32
+            std::string cmd = "robocopy \"" + (g_engine / "deps").string() + "\" \""
+                            + (locOut / "assets" / "deps").string() + "\" /E /NJH /NJS /NP /NS /NC /NFL /XD vendor >nul 2>nul";
+            std::system(cmd.c_str());
+#else
             for (const auto& e : fs::directory_iterator(g_engine / "deps")) {
-                if (e.path().filename() == "vendor") continue;   // 编译期依赖，跳过发布
+                if (e.path().filename() == "vendor") continue;
                 fs::copy(e.path(), locOut / "assets" / "deps" / e.path().filename(),
                          fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
             }
+#endif
         }
     }
-
-    // 静态资源发布：md/ 下图片/附件等非 Markdown 文件，按相对路径拷到本语言目录
-    copy_doc_assets(in_dir, locOut, ec);
-
-    // 构建期压缩（默认开启，config site.compress=false 可关）：
-    // 1) 图片：stb_image + libwebp 生成 WebP 副本（原图保留，页面 <picture> 优先 WebP）；
-    // 2) CSS：主题 css/ 保守紧凑化（去注释 + 折叠空白，无收益则不动）。
+    copy_doc_assets(b.in_dir, locOut, ec);
     if (cfg.compress) {
-        int nWebp = webpize_dir(locOut, cfg.jpegQuality);
-        if (g_verbose && nWebp > 0)
-            std::cout << color::muted("  [compress] 生成 " + std::to_string(nWebp) + " 个 WebP 副本\n");
+        webpize_dir(locOut, cfg.jpegQuality);
         compress_dir_css(locOut / "assets" / "css");
     }
-    // 资源指纹（cache busting）：对主题 css/js 计算内容哈希，页面引用与 sw 缓存同步加 ?v=
-    if (assetsChanged || g_fp.empty() || !fs::exists(locOut / "assets" / "css"))
-        fingerprint_assets(locOut / "assets");
+}
 
-    // 语言切换器（仅多语言模式）：链接到兄弟语言的 index.html
+// 页面渲染（单 locale，不含资产准备）—— 多 locale 可并行执行
+static void render_one_locale(BuildContext& b, const json& maps, const std::string& loc,
+                         bool multi, const I18nDict& dict) {
+    const SiteConfig& cfg = b.cfg;
+    const I18nCfg& i18n = b.i18n;
+    const RenderOpts& opt = b.opt;
+    fs::path locOut = multi ? b.out_dir / loc : b.out_dir;
+    std::string i18nJson = dict_to_json(dict);
+    std::string curLocale = loc;
+
     json langData = json{{"show", false}, {"current", ""}, {"items", json::array()}};
     if (multi) {
-        // 语言切换数据（地图模式 LangSwitch/LangItem 组件渲染；href 的 relBase 前缀由 map_render_page 修正）
         langData["show"] = true;
         langData["current"] = i18n.labels.count(loc) ? i18n.labels.at(loc) : loc;
         langData["items"] = json::array();
@@ -393,38 +480,24 @@ static void render_one_locale(BuildContext& b, const json& maps, const std::stri
                                                  {"href", "../" + kv.first + "/index.html"}});
     }
 
-    // 本语言在站点基址下的前缀（用于 canonical / 交替链接 / 结构化数据）
     std::string homeBase;
     if (!cfg.url.empty()) { homeBase = cfg.url; if (!homeBase.empty() && homeBase.back() != '/') homeBase += '/';
                             if (multi) homeBase += loc + "/"; }
 
-    // 行业标准增强：本语言 RSS / PWA / 社交分享所需的 head 片段与封面图 URL
     std::string feedTitle = i18n_replace(cfg.title, dict);
-    std::string feedLinkTag = "  <link rel=\"alternate\" type=\"application/rss+xml\" title=\""
-                              + esc_attr(feedTitle) + "\" href=\"./rss.xml\">\n";
-    std::string manifestTag = "  <link rel=\"manifest\" href=\"./manifest.webmanifest\">\n"
-                              "  <meta name=\"theme-color\" content=\"#a8332a\">\n";
     std::string ogImageUrl;
     if (!cfg.ogImage.empty() && !cfg.url.empty()) {
         ogImageUrl = cfg.url;
         if (ogImageUrl.back() != '/') ogImageUrl += '/';
         std::string rel = cfg.ogImage;
-        if (!rel.empty() && rel.front() == '/') rel = rel.substr(1);   // 去掉开头 /，避免双斜杠
+        if (!rel.empty() && rel.front() == '/') rel = rel.substr(1);
         if (rel.compare(0, 4, "http") == 0) ogImageUrl = rel;
         else ogImageUrl += rel;
     }
 
-    // hreflang 交替链接（i18n 标准 SEO）：指向其他语言同一页面 + x-default。
-    // url 配置时用绝对地址；url 为空时用相对路径，需按页面深度加 ../ 前缀
-    // （子目录页如 guide/install 在 zh-CN/guide/，兄弟语言在 ../../en/...）。
-    // head 数据化（地图模式 MetaLink/MetaOgItem/MetaNameItem/JsonLd 组件渲染）。
-    // canonical/prev/next/hreflang/RSS/manifest → links；OG/Twitter/theme-color → meta；
-    // JSON-LD → jsonld 字符串。fallback 仍用 headExtra 字符串（双轨并行）。
-    // 每语言渲染上下文（收敛跨函数参数）
-    bool hasFeed = !b.blog_posts.empty();   // 有订阅流（博客）→ head 输出 RSS link + 生成 feed
+    bool hasFeed = !b.blog_posts.empty();
     LocaleRenderCtx rc{maps, dict, i18nJson, curLocale, homeBase, feedTitle, hasFeed, ogImageUrl, langData, locOut};
 
-    // 页面类型渲染（render_pages.cpp）：首页/文档页/博客流/搜索索引/标签聚合/single
     render_home(b, rc);
     render_doc_pages(b, rc);
     render_blog(b, rc);
@@ -433,9 +506,6 @@ static void render_one_locale(BuildContext& b, const json& maps, const std::stri
     render_markets(b, rc);
     render_single(b, rc);
 
-    // 11) RSS / JSON Feed 后置：统一在 run_build 收尾的 write_root_feeds_pwa 生成
-    //     （所有页面渲染完成后集中输出，日志在末尾；含增量签名跳过逻辑）
-    // 12) PWA（manifest + service worker + theme-color），内建替代 gen-pwa.js
     gen_pwa(locOut, cfg, feedTitle, theme_root() / "assets");}
 
 static void render_locales(BuildContext& b) {
@@ -527,45 +597,72 @@ static void render_locales(BuildContext& b) {
     if (i18n.enabled) for (auto& kv : i18n.labels) locs.push_back(kv.first);
     else              locs.push_back("");   // 单语言哨兵（空 loc）
 
-    // 前端资源变化检测（语言循环外统一计算，避免多语言下首个语言复制/写 sig 后
-    // 后续语言全部跳过——旧实现导致只有首个语言目录刷新 assets）。
-    // 签名 = 主题 assets / 运行时 deps 递归所有文件 mtime 最大值；只 stat 目录本身会在"改文件内容"时漏检。
-    std::time_t asig = 0;
-    std::error_code rec;
-    for (const auto& ap : {theme_root() / "assets", g_engine / "deps"}) {
-        if (!fs::exists(ap, rec)) continue;
-        rec.clear();
-        for (auto it = fs::recursive_directory_iterator(ap, rec), end = fs::recursive_directory_iterator();
-             it != end; it.increment(rec)) {
-            if (rec) { rec.clear(); continue; }
-            if (!it->is_regular_file(rec)) continue;
-            struct stat ast;
-            if (stat(it->path().string().c_str(), &ast) == 0 && ast.st_mtime > asig) asig = ast.st_mtime;
-        }
-    }
+    // 前端资源变化检测：两级签名 —— 目录级快检 mtime（O(2) stat）→ 未变则跳过
+    // 递归遍历（O(N) stat，130+ 文件）；目录变化时才降级全量扫描。
     std::error_code aec;
-    fs::path aSigFile = g_engine / ".build" / ".assets.sig";
+    fs::path aSigDir  = g_engine / ".build" / ".assets.sig";
+    fs::path aSigFile = g_engine / ".build" / ".assets_full.sig";
     fs::create_directories(g_engine / ".build", aec);
-    std::string aPrev = fs::exists(aSigFile, aec) ? trim(read_file(aSigFile)) : std::string();
-    std::string aCur = std::to_string(asig);
-    bool assetsChanged = (aPrev != aCur);   // 源有变化 → 本次全语言刷新
-
-    // 语言渲染循环：每个语言调用 render_one_locale（assets/压缩/指纹/页面渲染/feeds/PWA）
-    for (const auto& loc : locs) {
-        bool multi = i18n.enabled;
-        const I18nDict& dict = multi ? i18n.dicts[loc] : fallbackUI;
-        render_one_locale(b, maps, loc, multi, dict, asig, assetsChanged);
+    // 目录级快检：两个根目录 mtime 最大值
+    std::time_t dirSig = 0;
+    for (const auto& ap : {theme_root() / "assets", g_engine / "deps"}) {
+        struct stat st;
+        if (stat(ap.string().c_str(), &st) == 0 && st.st_mtime > dirSig) dirSig = st.st_mtime;
+    }
+    std::string dirPrev = fs::exists(aSigDir, aec) ? trim(read_file(aSigDir)) : std::string();
+    bool assetsChanged = (dirPrev != std::to_string(dirSig));
+    // 目录变化时才做全量递归扫描（确保文件内容修改也检测到）
+    if (assetsChanged) {
+        std::time_t asig = 0;
+        std::error_code rec;
+        for (const auto& ap : {theme_root() / "assets", g_engine / "deps"}) {
+            if (!fs::exists(ap, rec)) continue;
+            rec.clear();
+            for (auto it = fs::recursive_directory_iterator(ap, rec), end = fs::recursive_directory_iterator();
+                 it != end; it.increment(rec)) {
+                if (rec) { rec.clear(); continue; }
+                if (!it->is_regular_file(rec)) continue;
+                struct stat ast;
+                if (stat(it->path().string().c_str(), &ast) == 0 && ast.st_mtime > asig) asig = ast.st_mtime;
+            }
+        }
+        std::string aPrevFull = fs::exists(aSigFile, aec) ? trim(read_file(aSigFile)) : std::string();
+        assetsChanged = (aPrevFull != std::to_string(asig));
+        if (assetsChanged) {
+            { std::ofstream f(aSigFile); f << asig; }
+        }
+        { std::ofstream f(aSigDir); f << dirSig; }
     }
 
-    // 死链检查放在全部语言构建完成后统一执行（避免语言切换链接在兄弟语言目录
-    // 尚未生成时被误报）；对标 VitePress/MkDocs 的链接校验，结果末尾告警不阻断。
+    // Phase 0: 资产准备（串行 —— 多 locale 共享主题，指纹只需一次）
+    for (const auto& loc : locs)
+        setup_locale_assets(b, loc, i18n.enabled, assetsChanged);
+    if (assetsChanged || g_fp.empty())
+        fingerprint_assets((i18n.enabled ? out_dir / locs[0] : out_dir) / "assets");
+    // 模块导入指纹：必须处理全部 locale（各 locale 有独立 assets/ 副本）
+    for (const auto& loc : locs)
+        fingerprint_js_imports((i18n.enabled ? out_dir / loc : out_dir) / "assets");
+
+    // Phase 1: 页面渲染（并行 —— 各 locale 独立输出目录，互不冲突）
+    auto tLoc0 = std::chrono::steady_clock::now();
+    bool multi = i18n.enabled;
+    run_parallel(locs.size(), [&](size_t i) {
+        const std::string& loc = locs[i];
+        const I18nDict& dict = multi ? i18n.dicts[loc] : fallbackUI;
+        render_one_locale(b, maps, loc, multi, dict);
+        std::cerr << "[perf]  locale " << (loc.empty() ? "(default)" : loc) << " 渲染完成\n";
+    });
+    std::cerr << "[perf] render_locales 总耗时 "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - tLoc0).count() << "s\n";
+
+    // 死链检查：串行执行（并发写盘后文件系统缓存可能导致 fs::exists 误判）
+    auto tLk0 = std::chrono::steady_clock::now();
     for (const auto& loc : locs) {
-        fs::path lo = out_dir;
-        if (!loc.empty()) lo = out_dir / loc;
+        fs::path lo = loc.empty() ? out_dir : out_dir / loc;
         check_links(lo, loc);
     }
-    // 全部语言复制完成后统一写资产签名（源变化时刷新了所有语言目录）
-    if (assetsChanged) { std::ofstream f(aSigFile); f << aCur; }
+    std::cerr << "[perf] check_links 总耗时 "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - tLk0).count() << "s\n";
 }
 
 // --clean 原子替换：把旧输出目录 rename 为 <out>.old（瞬时 O(1)），
@@ -610,34 +707,40 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
 
     // 外部脚本插件：扫描 .Cdocs/plugins/*/plugin.json（无插件目录时零开销）
     plugins_scan_all();
+    preload_components();                      // 预加载组件 HTML → 内存，消后续磁盘搜索
 
     load_site_config(b);                      // 1) 配置 + 导航 + 渲染开关
     // 插件钩子：配置加载完成后（可让插件增强/修改站点配置相关上下文）。
     // 收集各插件 out.json 的 inject 对象（key=语言 → 正文末尾注入 HTML，如评论插件），
     // 渲染时按当前语言插入正文末尾（引擎只提供通用注入能力，不感知具体插件）。
-    g_body_ends.clear();
-    {
-        std::vector<json> outs;
-        run_plugin_hooks("on_config", json{
-            {"source", fs::absolute(in_dir).string()},
-            {"dest",   fs::absolute(out_dir).string()},
-            {"engine", fs::absolute(g_engine).string()},
-            {"title",  b.cfg.title},
-            {"plugins", b.cfg.plugins}
-        }, &outs);
-        for (const auto& o : outs) {
-            if (!o.is_object() || !o.contains("inject") || !o["inject"].is_object()) continue;
-            for (auto& [loc, html] : o["inject"].items())
-                if (html.is_string())
-                    g_body_ends[loc] += html.get<std::string>() + "\n";
+    // 守卫：多版本构建递归调用 run_build，on_config 只需执行一次（版本间无差异）。
+    static bool s_on_config_ran = false;
+    if (!s_on_config_ran) {
+        s_on_config_ran = true;
+        g_body_ends.clear();
+        {
+            std::vector<json> outs;
+            run_plugin_hooks("on_config", json{
+                {"source", fs::absolute(in_dir).string()},
+                {"dest",   fs::absolute(out_dir).string()},
+                {"engine", fs::absolute(g_engine).string()},
+                {"title",  b.cfg.title},
+                {"plugins", b.cfg.plugins}
+            }, &outs);
+            for (const auto& o : outs) {
+                if (!o.is_object() || !o.contains("inject") || !o["inject"].is_object()) continue;
+                for (auto& [loc, html] : o["inject"].items())
+                    if (html.is_string())
+                        g_body_ends[loc] += html.get<std::string>() + "\n";
+            }
         }
     }
     if (int rc = prepare_pages(b)) return rc; // 2) 输入检查 + 收集页面 + 预扫描
 
-    // 增量构建判定：仅 serve -w 且未 --clean 时启用。
+    // 增量构建判定：非 --clean 时始终启用（不再限制仅 watch 模式）。
     // 全局签名（config/route/i18n/templates/assets 的 mtime 最大值）变化 → 全量；
-    // 否则源 .md 未变的页面跳过渲染（复用已生成产物），加速 watch 循环。
-    if (g_incremental && !cleanBefore) {
+    // 否则源 .md 未变的页面跳过渲染（复用已生成产物）。
+    if (!cleanBefore) {
         std::error_code ec;
         std::time_t sig = 0;
         for (const auto& p : {g_engine / "config" / "config.json",
@@ -691,17 +794,22 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
             {"pages",  pagesArr}
         });
     }
-    render_locales(b);                        // 3) 多语言构建循环
+    // feeds / sitemap / robots 不依赖渲染产物，与页面渲染并行执行
+    auto asyncIO = std::async(std::launch::async, [&] {
+        write_root_feeds_pwa(b);
+        write_sitemap(b);
+        write_robots(b);
+    });
+    render_locales(b);                        // 3) 多语言构建循环（并行跑）
+    asyncIO.get();                             // 等待 I/O 完成
     write_root_redirect(b);                   // 4) 多语言根 index.html 重定向
-    write_root_feeds_pwa(b);                  // 5) 根目录 feed / PWA
-    write_sitemap(b);                         // 6) sitemap.xml
-    write_robots(b);                          // 7) robots.txt
     // 插件钩子：全部产物生成完成后（部署 / 压缩 / 通知等收尾）
     run_plugin_hooks("on_done", json{
         {"source", fs::absolute(in_dir).string()},
         {"dest",   fs::absolute(out_dir).string()},
         {"engine", fs::absolute(g_engine).string()}
     });
+    plugins_terminate_all();     // 终止持久插件进程（构建结束，不再需要）
     // 持久化页面指纹，供下次 watch 增量判定（全量/增量都写，首次全量后即可增量）
     if (!b.pageSig.empty()) {
         json j = json::object();
@@ -713,5 +821,32 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
     }
     print_summary(b);                         // 8) 汇总输出
     scan_output_leftovers(out_dir);           // 9) 残留检测：{{}}/组件标签残留 → 显式警告
+    // 10) 清理残留 HTML：删除 pageSig 中无记录的 .html（源 .md 已删除/更名）
+    {
+        std::set<std::string> keep;
+        for (const auto& kv : b.pageSig) {
+            size_t p = kv.first.rfind('|');
+            if (p == std::string::npos) continue;
+            std::string file = kv.first.substr(0, p);
+            std::string loc  = kv.first.substr(p + 1);
+            fs::path fp = loc.empty() ? out_dir : out_dir / loc;
+            keep.insert(fs::absolute(fp / (file + ".html")).string());
+        }
+        std::error_code rec;
+        for (auto it = fs::recursive_directory_iterator(out_dir, rec),
+                  end = fs::recursive_directory_iterator();
+             !rec && it != end; it.increment(rec)) {
+            if (rec) { rec.clear(); continue; }
+            std::error_code e2;
+            if (!it->is_regular_file(e2) || it->path().extension() != ".html") continue;
+            if (keep.count(fs::absolute(it->path()).string()) == 0) {
+                if (g_verbose)
+                    std::cout << color::muted("  [incr] 清理残留: ")
+                              << fs::relative(it->path(), out_dir) << "\n";
+                std::error_code re2;
+                fs::remove(it->path(), re2);
+            }
+        }
+    }
     return 0;
 }

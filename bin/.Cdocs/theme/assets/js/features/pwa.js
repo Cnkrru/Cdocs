@@ -4,6 +4,8 @@ export function initPWA() {
   if (!location.protocol.indexOf) return;
   if (location.protocol.indexOf('http') !== 0) return;   // file:// 不支持 SW
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('./sw.js').catch(function (e) { console.warn('SW 注册失败', e); });
+    var ml = document.querySelector('link[rel="manifest"]');
+    var sw = ml ? new URL('./sw.js', ml.href).pathname : './sw.js';
+    navigator.serviceWorker.register(sw).catch(function (e) { console.warn('SW 注册失败', e); });
   });
 }

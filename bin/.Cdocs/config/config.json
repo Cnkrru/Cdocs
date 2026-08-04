@@ -90,14 +90,6 @@
         "title": "{{navBlog}}",
         "file": "blog/index"
       },
-      {
-        "title": "{{marketPlugins}}",
-        "file": "plugin-market/index"
-      },
-      {
-        "title": "{{marketThemes}}",
-        "file": "theme-market/index"
-      }
     ]
   },
   "center": {

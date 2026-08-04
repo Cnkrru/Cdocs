@@ -39,9 +39,9 @@ json link_json(const Link& l, const std::string& relBase = "");
 // 导航树 → 2 层展平（递归收集，对标 Hugo 侧边栏嵌套）
 json nav_tree_json(const std::vector<NavNode>& nodes, const std::string& curFile,
                    const std::string& relBase = "");
-// 导航组 → 分组 json（地图模式 NavGroup/NavItem）
+// 导航组 → 分组 json（地图模式 NavGroup/NavItem）；localeKey 用于骨架缓存
 json nav_groups_json(const std::vector<NavNode>& nodes, const std::string& curFile,
-                     const std::string& relBase = "");
+                     const std::string& relBase = "", const std::string& localeKey = "");
 // 首页卡片白名单（cfg.homeCards 不配则自动全列）
 json cards_json(const SiteConfig& cfg, const std::vector<Page>& pages);
 // 上下篇分页数据（{show, prev:{...}, next:{...}}）
@@ -53,5 +53,6 @@ json header_json(const SiteConfig& cfg, const RenderOpts& opt, const std::string
                  const json& langSwitch, const std::string& relBase, bool isHome);
 // 页脚数据（show/text/links）
 json footer_json(const SiteConfig& cfg);
+const json& footer_json_cached(const SiteConfig& cfg);  // 构建内不变，缓存复用
 
 #endif  // CDOCS_CTXDATA_HPP

@@ -10,10 +10,18 @@ SRC  = os.path.join(ROOT, "web", ".Cdocs")
 
 # 发布包排除：.build（编译中间产物）、deps/vendor（编译期头文件，运行不需要）、
 # release 空目录（历史残留，git 不跟踪）
-EXCLUDE_DIRS = {".build", "release"}
+EXCLUDE_DIRS = {".build", "release", "plugins", os.path.join("theme", "components", "shortcodes", "markets")}
 EXCLUDE_REL = {os.path.join("deps", "vendor")}
+EXCLUDE_FILES = {
+    os.path.join("data", "plugin-market.json"),
+    os.path.join("data", "theme-market.json"),
+    os.path.join("theme", "map", "plugin-market.json"),
+    os.path.join("theme", "map", "theme-market.json"),
+}
 
 def should_skip(rel):
+    if rel in EXCLUDE_FILES:
+        return True
     for ex in EXCLUDE_DIRS:
         if rel == ex or rel.startswith(ex + os.sep):
             return True

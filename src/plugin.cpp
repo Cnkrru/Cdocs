@@ -10,11 +10,15 @@
 
 #include "plugin.hpp"
 #ifdef _WIN32
-#include <windows.h>   // CreateProcessA / WaitForSingleObject（core.hpp 已含，显式再引）
+#include <windows.h>
 #else
 #include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
 #endif
-#include <thread>      // 并行执行互不依赖的插件（run_plugin_hooks worker pool）
+#include <memory>
+#include <sstream>
+#include <thread>
 #include <atomic>
 #include <mutex>
 
@@ -32,6 +36,236 @@ struct Plugin {
 };
 std::vector<Plugin> g_plugins;                  // 已扫描到的插件
 bool g_scanned = false;
+
+// ============ 持久子进程（构建开始 spawn 一次，后续调用走 stdin/stdout 行协议） ============
+
+// Python 持久包装器：常驻进程，stdin 行 JSON → subprocess 调用插件脚本 → stdout 响应。
+// subprocess 冷启动比 OS 级 spawn 快 20-30 倍（解释器+DLL 已驻留）。
+static const char* kPersistRunnerCode = R"(import sys,json,tempfile,os,importlib.util
+sp=sys.argv[1]
+d=os.path.dirname(sp)
+spec=importlib.util.spec_from_file_location("plugin_module",sp)
+plugin=importlib.util.module_from_spec(spec)
+sys.path.insert(0,d)
+spec.loader.exec_module(plugin)
+while True:
+ l=sys.stdin.readline()
+ if not l: break
+ r=json.loads(l)
+ c=r.get('ctx',{})
+ fd,cp=tempfile.mkstemp(suffix='.json',text=True,dir=d)
+ with os.fdopen(fd,'w') as f: json.dump(c,f)
+ op=cp.replace('.json','.out.json')
+ sys.argv=[sp,cp,op]
+ try:
+  plugin.main()
+  with open(op) as f: out=json.load(f)
+ except Exception as e: out={'ok':False,'message':str(e)}
+ try: os.unlink(cp)
+ except: pass
+ try: os.unlink(op)
+ except: pass
+ sys.stdout.write(json.dumps(out,ensure_ascii=False)+'\n')
+ sys.stdout.flush()
+)";
+
+struct PersistentProc {
+    std::string name;
+#ifdef _WIN32
+    HANDLE hProcess;
+    HANDLE hStdinWrite;
+    HANDLE hStdoutRead;
+#else
+    pid_t pid;
+    int stdin_fd;
+    int stdout_fd;
+#endif
+    std::mutex mtx;   // 每进程串行化请求（同一 stdin/stdout 不能并发写读）
+};
+
+static std::map<std::string, std::unique_ptr<PersistentProc>> g_persistent;
+static std::mutex g_persistent_mtx;
+
+// 解析 "python scripts/foo.py" → "scripts/foo.py"（取最后一个空白分隔 token）
+static std::string extract_script_arg(const std::string& cmd) {
+    std::istringstream iss(cmd);
+    std::string tok, last;
+    while (iss >> tok) last = tok;
+    return last;
+}
+
+// 启动持久插件进程（首次调用时触发；失败时返回 false，调用方回退一次性子进程）
+static bool spawn_persistent(const Plugin& p, const PluginHook& h) {
+    // 写持久运行器脚本到 .build/（仅一次），文件级启动避免 CreateProcessW 内联引号问题
+    static bool runnerWritten = false;
+    if (!runnerWritten) {
+        std::error_code ec;
+        fs::path rp = g_engine / ".build" / "persist_runner.py";
+        fs::create_directories(g_engine / ".build", ec);
+        {
+            std::ofstream f(rp);
+            if (!f) { std::cerr << "[persist] 运行器写入失败: " << rp << "\n"; return false; }
+            f << kPersistRunnerCode;
+        }
+        runnerWritten = fs::exists(rp);
+        if (!runnerWritten) { std::cerr << "[persist] 运行器验证失败: " << rp << "\n"; return false; }
+    }
+    std::string script = extract_script_arg(h.cmd);
+    fs::path scriptPath = fs::absolute(p.dir / script);
+    fs::path runnerPath = fs::absolute(g_engine / ".build" / "persist_runner.py");
+#ifdef _WIN32
+    HANDLE hR1, hW1, hR2, hW2;
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = nullptr;
+    if (!CreatePipe(&hR1, &hW1, &sa, 0)) return false;
+    if (!CreatePipe(&hR2, &hW2, &sa, 0)) { CloseHandle(hR1); CloseHandle(hW1); return false; }
+    SetHandleInformation(hW1, HANDLE_FLAG_INHERIT, 0);  // 子进程不继承写端
+    SetHandleInformation(hR2, HANDLE_FLAG_INHERIT, 0);  // 子进程不继承读端
+
+    std::string cmdLine = "python -u \"" + runnerPath.string() + "\" \"" + scriptPath.string() + "\"";
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, cmdLine.c_str(), (int)cmdLine.size(), nullptr, 0);
+    std::vector<wchar_t> wcmd(wlen + 1);
+    MultiByteToWideChar(CP_UTF8, 0, cmdLine.c_str(), (int)cmdLine.size(), wcmd.data(), wlen);
+    wcmd[wlen] = L'\0';
+
+    std::vector<wchar_t> wcwd;
+    if (!p.dir.empty()) {
+        std::string cs = p.dir.string();
+        int clen = MultiByteToWideChar(CP_UTF8, 0, cs.c_str(), (int)cs.size(), nullptr, 0);
+        wcwd.resize(clen + 1);
+        MultiByteToWideChar(CP_UTF8, 0, cs.c_str(), (int)cs.size(), wcwd.data(), clen);
+        wcwd[clen] = L'\0';
+    }
+
+    STARTUPINFOW si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.hStdInput  = hR1; si.hStdOutput = hW2;
+    si.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
+    if (!CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, TRUE,
+                        CREATE_NO_WINDOW, nullptr,
+                        wcwd.empty() ? nullptr : wcwd.data(), &si, &pi)) {
+        std::cerr << "[persist] CreateProcessW 失败 err=" << GetLastError() << " cmd=" << cmdLine << "\n";
+        CloseHandle(hR1); CloseHandle(hW1); CloseHandle(hR2); CloseHandle(hW2);
+        return false;
+    }
+    CloseHandle(hR1); CloseHandle(hW2); CloseHandle(pi.hThread);
+
+    auto pp = std::make_unique<PersistentProc>();
+    pp->name = p.name; pp->hProcess = pi.hProcess;
+    pp->hStdinWrite = hW1; pp->hStdoutRead = hR2;
+    { std::lock_guard<std::mutex> lk(g_persistent_mtx); g_persistent[p.name] = std::move(pp); }
+    return true;
+#else
+    int sin[2], sout[2];
+    if (pipe(sin) < 0 || pipe(sout) < 0) return false;
+    pid_t pid = fork();
+    if (pid < 0) { close(sin[0]); close(sin[1]); close(sout[0]); close(sout[1]); return false; }
+    if (pid == 0) {
+        close(sin[1]); close(sout[0]);
+        dup2(sin[0], STDIN_FILENO); dup2(sout[1], STDOUT_FILENO);
+        close(sin[0]); close(sout[1]);
+        if (!p.dir.empty()) fs::current_path(p.dir);
+        std::string pyCmd = "python -u '" + runnerPath.string() + "' '" + scriptPath.string() + "'";
+        execl("/bin/sh", "sh", "-c", pyCmd.c_str(), nullptr);
+        _exit(1);
+    }
+    close(sin[0]); close(sout[1]);
+    auto pp = std::make_unique<PersistentProc>();
+    pp->name = p.name; pp->pid = pid; pp->stdin_fd = sin[1]; pp->stdout_fd = sout[0];
+    { std::lock_guard<std::mutex> lk(g_persistent_mtx); g_persistent[p.name] = std::move(pp); }
+    return true;
+#endif
+}
+
+// 读管道直到换行符（简单行协议）
+static std::string read_pipe_line(PersistentProc& pp) {
+    std::string buf;
+#ifdef _WIN32
+    char ch; DWORD rd;
+    while (ReadFile(pp.hStdoutRead, &ch, 1, &rd, nullptr) && rd == 1) {
+        if (ch == '\n') break;
+        buf += ch;
+    }
+#else
+    char ch;
+    while (read(pp.stdout_fd, &ch, 1) > 0) {
+        if (ch == '\n') break;
+        buf += ch;
+    }
+#endif
+    return buf;
+}
+
+// 通过持久进程执行一次钩子调用（失败返回 false，调用方回退一次性子进程）
+static bool run_hook_persistent(const Plugin& p, const PluginHook& h, const std::string& hook,
+                                const json& ctx, json* outJson) {
+    std::string key = p.name;
+    PersistentProc* pp = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(g_persistent_mtx);
+        auto it = g_persistent.find(key);
+        if (it != g_persistent.end()) pp = it->second.get();
+    }
+    if (!pp) {
+        // 首次调用：spawn 持久进程
+        if (!spawn_persistent(p, h)) return false;
+        std::lock_guard<std::mutex> lk(g_persistent_mtx);
+        auto it = g_persistent.find(key);
+        if (it == g_persistent.end()) return false;
+        pp = it->second.get();
+    }
+    std::lock_guard<std::mutex> lk(pp->mtx);
+
+    json req;
+    req["hook"] = hook; req["ctx"] = ctx;
+    std::string line = req.dump() + "\n";
+
+#ifdef _WIN32
+    DWORD wr;
+    if (!WriteFile(pp->hStdinWrite, line.c_str(), (DWORD)line.size(), &wr, nullptr))
+        return false;
+#else
+    if (write(pp->stdin_fd, line.c_str(), line.size()) < 0) return false;
+#endif
+
+    std::string resp = read_pipe_line(*pp);
+    if (resp.empty()) return false;
+
+    try {
+        json out = json::parse(resp);
+        if (outJson) *outJson = std::move(out);
+        return true;
+    } catch (...) { return false; }
+}
+
+// 终止所有持久进程：关闭 stdin → 等 3s 优雅退出 → 强杀
+static void terminate_all_persistent() {
+    std::lock_guard<std::mutex> lk(g_persistent_mtx);
+#ifdef _WIN32
+    for (auto& kv : g_persistent) {
+        auto& pp = *kv.second;
+        CloseHandle(pp.hStdinWrite);
+        WaitForSingleObject(pp.hProcess, 3000);
+        TerminateProcess(pp.hProcess, 0);
+        CloseHandle(pp.hProcess);
+        CloseHandle(pp.hStdoutRead);
+    }
+#else
+    for (auto& kv : g_persistent) {
+        auto& pp = *kv.second;
+        close(pp.stdin_fd);
+        usleep(3000000);
+        int st;
+        if (waitpid(pp.pid, &st, WNOHANG) == 0)
+            kill(pp.pid, SIGTERM);
+        close(pp.stdout_fd);
+    }
+#endif
+    g_persistent.clear();
+}
 
 // 跨平台 subprocess：执行 cmdLine，可选超时。返回进程退出码（0=成功，-1=启动失败，124=超时）
 // cwd 非空时以该目录为子进程工作目录：Windows 走 lpCurrentDirectory（不碰全局 cwd，线程安全，
@@ -175,12 +409,31 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
     std::mutex ioMutex;
     auto run_one = [&](const Plugin& p) {
         const PluginHook& h = p.hooks.at(hook);
-        std::error_code lec;   // 并发 worker 各自持有，避免共享 ec 数据竞争
 
-        // 1) 写上下文 JSON
+        // 持久进程优先：Python 插件（cmd 以 "python " 开头）首次 spawn 后复用
+        bool isPython = (h.cmd.rfind("python ", 0) == 0 || h.cmd.rfind("python3 ", 0) == 0);
+        if (isPython) {
+            if (!g_quiet) {
+                std::lock_guard<std::mutex> lk(ioMutex);
+                std::cout << color::muted("  · 插件 ") << color::cyan(p.name)
+                          << color::muted(" → ") << hook << "\n";
+            }
+            auto t0 = std::chrono::steady_clock::now();
+            json out;
+            if (run_hook_persistent(p, h, hook, ctx, &out)) {
+                std::cerr << "[perf] 插件 " << p.name << " " << hook << " persist "
+                          << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << "s\n";
+                if (outs) { std::lock_guard<std::mutex> lk(ioMutex); outs->push_back(std::move(out)); }
+                return;
+            }
+            // 失败回退：持久进程可能崩溃/超时，走常规子进程路径
+        }
+
+        // 一次性子进程（持久未启用或失败回退）
+        std::error_code lec;
         fs::path ctxPath = swapDir / (p.name + "." + hook + ".ctx.json");
         fs::path outPath = swapDir / (p.name + "." + hook + ".out.json");
-        fs::remove(outPath, lec);                      // 清掉上次结果
+        fs::remove(outPath, lec);
         {
             std::ofstream f(ctxPath);
             if (!f) {
@@ -192,15 +445,17 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
             f << ctx.dump(2);
         }
 
-        // 2) 执行脚本：<cmd> <ctx> <out>（工作目录 = 插件目录，便于相对路径引用脚本；
-        //    Windows 走 lpCurrentDirectory，不修改全局 cwd → 多插件并行安全）
         if (!g_quiet) {
             std::lock_guard<std::mutex> lk(ioMutex);
             std::cout << color::muted("  · 插件 ") << color::cyan(p.name)
                       << color::muted(" → ") << hook << "\n";
         }
         std::string cmdLine = h.cmd + " \"" + ctxPath.string() + "\" \"" + outPath.string() + "\"";
+        auto tSpawn = std::chrono::steady_clock::now();
         int rc = run_subprocess(cmdLine, h.timeout, &p.dir);
+        auto tSpawnEnd = std::chrono::steady_clock::now();
+        std::cerr << "[perf] 插件 " << p.name << " " << hook << " 子进程 "
+                  << std::chrono::duration<double>(tSpawnEnd - tSpawn).count() << "s rc=" << rc << "\n";
 
         if (rc != 0) {
             std::lock_guard<std::mutex> lk(ioMutex);
@@ -209,7 +464,7 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
             return;
         }
 
-        // 3) 读结果 JSON 摘要（可选：脚本可写 {ok, message} 到 out.json）
+        // 读结果 JSON
         if (fs::exists(outPath, lec)) {
             try {
                 json out = json::parse(read_file(outPath));
@@ -224,7 +479,7 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
                 }
                 if (outs) {
                     std::lock_guard<std::mutex> lk(ioMutex);
-                    outs->push_back(std::move(out));   // 供调用方消费（注入片段等）
+                    outs->push_back(std::move(out));
                 }
             } catch (...) { /* out.json 非 JSON 时忽略 */ }
         }
@@ -234,6 +489,8 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
     size_t n = matches.size();
     unsigned hw = std::thread::hardware_concurrency();
     unsigned nThreads = (hw <= 1) ? 1u : std::min<unsigned>(hw, (unsigned)n);
+    std::cerr << "[perf] hook=" << hook << " matches=" << n << " hw=" << hw << " threads=" << nThreads << "\n";
+    auto tPool0 = std::chrono::steady_clock::now();
     std::atomic<size_t> next{0};
     std::vector<std::thread> pool;
     pool.reserve(nThreads);
@@ -246,4 +503,10 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
             }
         });
     for (auto& th : pool) th.join();
+    std::cerr << "[perf] hook=" << hook << " 批次总耗时 "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - tPool0).count() << "s\n";
+}
+
+void plugins_terminate_all() {
+    terminate_all_persistent();
 }
