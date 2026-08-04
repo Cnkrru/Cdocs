@@ -203,8 +203,9 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
     // ---- Hugo 式并发渲染（多核并行）----
     // 两阶段：①并行渲染正文到内存（写各自 pages[i]，无跨元素竞争）；
     //         ②并行拼装页面并写盘（pager 需全部页面 title 就绪）。
-    // 有插件注册时退化串行（on_page_rendered 依赖顺序与安全）。
-    bool hasPlugs = plugins_any();
+    // 仅当有插件注册 on_page_rendered 时才退化串行（该钩子依赖页面写出时序与安全）；
+    // 其余插件（on_config/on_data_query 等）不参与页面渲染，无需牺牲并行。
+    bool hasPlugs = plugins_hook_registered("on_page_rendered");
     std::mutex sigMutex;                       // pageSig 并发读写保护
     std::vector<char> skip(pages.size(), 0);   // 增量跳过标记（阶段 2 复用）
     // 阶段 1 产物暂存（并发下各线程只写自己索引，安全；阶段 2 只读自身索引）

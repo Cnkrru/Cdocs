@@ -302,11 +302,11 @@ std::string map_render_page(const SiteConfig& cfg, const RenderOpts& opt,
         const json& sd = site_data();
         for (auto it = sd.cbegin(); it != sd.cend(); ++it) {
             data[it.key()] = it.value();
-            g_tpl_keys.insert(it.key());   // 站点 data 键加入 L2 白名单（"有 kv 就拿"；没 kv 不误报）
+            { std::lock_guard<std::mutex> lk(g_tpl_keys_mtx); g_tpl_keys.insert(it.key()); }  // 站点 data 键加入 L2 白名单（"有 kv 就拿"；没 kv 不误报）
         }
     }
     // 收集合法模板键 → g_tpl_keys（L2 残留检测白名单）
-    for (auto it = data.cbegin(); it != data.cend(); ++it) g_tpl_keys.insert(it.key());
+    { std::lock_guard<std::mutex> lk(g_tpl_keys_mtx); for (auto it = data.cbegin(); it != data.cend(); ++it) g_tpl_keys.insert(it.key()); }
     std::string out = compose_page(mapType, data);
     // 首页 layout no-sidebar（地图已写则 find 不命中，无害兜底）
     if (isHome) {

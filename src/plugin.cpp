@@ -14,6 +14,9 @@
 #else
 #include <sys/wait.h>
 #endif
+#include <thread>      // 并行执行互不依赖的插件（run_plugin_hooks worker pool）
+#include <atomic>
+#include <mutex>
 
 namespace {
 
@@ -31,7 +34,9 @@ std::vector<Plugin> g_plugins;                  // 已扫描到的插件
 bool g_scanned = false;
 
 // 跨平台 subprocess：执行 cmdLine，可选超时。返回进程退出码（0=成功，-1=启动失败，124=超时）
-int run_subprocess(const std::string& cmdLine, int timeoutSec) {
+// cwd 非空时以该目录为子进程工作目录：Windows 走 lpCurrentDirectory（不碰全局 cwd，线程安全，
+// 支持插件并行执行）；POSIX 无等效参数，用锁串行化 chdir（构建场景可接受）。
+int run_subprocess(const std::string& cmdLine, int timeoutSec, const fs::path* cwd = nullptr) {
 #ifdef _WIN32
     // Windows：CreateProcessW（宽字符，兼容中文路径）+ 可控超时 + 可杀进程
     STARTUPINFOW si;
@@ -44,8 +49,18 @@ int run_subprocess(const std::string& cmdLine, int timeoutSec) {
     std::vector<wchar_t> wcmd(wlen + 1);
     MultiByteToWideChar(CP_UTF8, 0, cmdLine.c_str(), (int)cmdLine.size(), wcmd.data(), wlen);
     wcmd[wlen] = L'\0';
+    // 可选工作目录：转 UTF-16 后作为 lpCurrentDirectory 传入（线程安全，不修改全局 cwd）
+    std::vector<wchar_t> wcwd;
+    if (cwd && !cwd->empty()) {
+        std::string cs = cwd->string();
+        int clen = MultiByteToWideChar(CP_UTF8, 0, cs.c_str(), (int)cs.size(), nullptr, 0);
+        wcwd.resize(clen + 1);
+        MultiByteToWideChar(CP_UTF8, 0, cs.c_str(), (int)cs.size(), wcwd.data(), clen);
+        wcwd[clen] = L'\0';
+    }
+    LPCWSTR lpCwd = wcwd.empty() ? nullptr : wcwd.data();
     if (!CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+                        CREATE_NO_WINDOW, nullptr, lpCwd, &si, &pi)) {
         return -1;
     }
     DWORD waitMs = (timeoutSec > 0) ? (DWORD)timeoutSec * 1000 : INFINITE;
@@ -62,6 +77,11 @@ int run_subprocess(const std::string& cmdLine, int timeoutSec) {
     return (int)code;
 #else
     // POSIX：system 简化（构建场景可接受）；信号等待退出码
+    // cwd 切换是进程级全局操作，并行调用时用锁串行化（构建脚本量级，可接受）
+    static std::mutex posixCwdMutex;
+    std::lock_guard<std::mutex> cwdLk(posixCwdMutex);
+    fs::path saved;
+    if (cwd && !cwd->empty()) { saved = fs::current_path(); fs::current_path(*cwd); }
     int rc = std::system(cmdLine.c_str());
     // Linux 常见「只有 python3 没有 python」：cmd 以 "python " 开头且 command not found(127) 时，
     // 自动回退 python3 重试（对 Windows 分支无影响，其他插件不受影响）。
@@ -69,6 +89,7 @@ int run_subprocess(const std::string& cmdLine, int timeoutSec) {
         std::string alt = "python3" + cmdLine.substr(6);
         rc = std::system(alt.c_str());
     }
+    if (!saved.empty()) fs::current_path(saved);
     if (rc < 0) return -1;
     if (WIFEXITED(rc)) return WEXITSTATUS(rc);
     return -1;
@@ -126,6 +147,13 @@ bool plugins_any() {
     return g_scanned && !g_plugins.empty();
 }
 
+bool plugins_hook_registered(const std::string& hook) {
+    if (!g_scanned) return false;
+    for (const auto& p : g_plugins)
+        if (p.hooks.count(hook)) return true;
+    return false;
+}
+
 void run_plugin_hooks(const std::string& hook, const json& ctx,
                       std::vector<json>* outs) {
     if (!g_scanned) return;                 // 未初始化（非 build 路径）直接跳过
@@ -137,56 +165,85 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
     fs::path swapDir = fs::absolute(g_engine / ".build" / "plugins");
     fs::create_directories(swapDir, ec);
 
-    for (const auto& p : g_plugins) {
-        auto it = p.hooks.find(hook);
-        if (it == p.hooks.end()) continue;
+    // 收集匹配该钩子的插件（各插件 ctx/out 文件相互独立，可并行执行）
+    std::vector<const Plugin*> matches;
+    for (const auto& p : g_plugins)
+        if (p.hooks.count(hook)) matches.push_back(&p);
+    if (matches.empty()) return;
+
+    // 插件输出摘要与注入结果收集：并发下用锁保护（outs 顺序无保证，调用方按 key 消费）
+    std::mutex ioMutex;
+    auto run_one = [&](const Plugin& p) {
+        const PluginHook& h = p.hooks.at(hook);
+        std::error_code lec;   // 并发 worker 各自持有，避免共享 ec 数据竞争
 
         // 1) 写上下文 JSON
         fs::path ctxPath = swapDir / (p.name + "." + hook + ".ctx.json");
         fs::path outPath = swapDir / (p.name + "." + hook + ".out.json");
-        fs::remove(outPath, ec);                       // 清掉上次结果
+        fs::remove(outPath, lec);                      // 清掉上次结果
         {
             std::ofstream f(ctxPath);
             if (!f) {
+                std::lock_guard<std::mutex> lk(ioMutex);
                 std::cerr << color::yellow("  ⚠ 插件 ") << p.name
                           << ": 无法写入上下文 " << ctxPath << "\n";
-                continue;
+                return;
             }
             f << ctx.dump(2);
         }
 
-        // 2) 执行脚本：<cmd> <ctx> <out>（脚本工作目录 = 插件目录，便于相对路径引用脚本）
-        if (!g_quiet)
+        // 2) 执行脚本：<cmd> <ctx> <out>（工作目录 = 插件目录，便于相对路径引用脚本；
+        //    Windows 走 lpCurrentDirectory，不修改全局 cwd → 多插件并行安全）
+        if (!g_quiet) {
+            std::lock_guard<std::mutex> lk(ioMutex);
             std::cout << color::muted("  · 插件 ") << color::cyan(p.name)
                       << color::muted(" → ") << hook << "\n";
-        // 命令含相对路径（如 python scripts/x.py）时以插件目录为基准执行
-        std::string cmdLine = it->second.cmd + " \"" + ctxPath.string() + "\" \"" + outPath.string() + "\"";
-        fs::path savedCwd = fs::current_path();          // 执行后无条件恢复 cwd
-        std::error_code cec;
-        fs::current_path(p.dir, cec);
-
-        int rc = run_subprocess(cmdLine, it->second.timeout);
-
-        fs::current_path(savedCwd, cec);
+        }
+        std::string cmdLine = h.cmd + " \"" + ctxPath.string() + "\" \"" + outPath.string() + "\"";
+        int rc = run_subprocess(cmdLine, h.timeout, &p.dir);
 
         if (rc != 0) {
+            std::lock_guard<std::mutex> lk(ioMutex);
             std::cerr << color::yellow("  ⚠ 插件 ") << p.name << " (" << hook
                       << ") 执行失败 exit=" << rc << "（已忽略，构建继续）\n";
-            continue;
+            return;
         }
 
         // 3) 读结果 JSON 摘要（可选：脚本可写 {ok, message} 到 out.json）
-        if (fs::exists(outPath, ec)) {
+        if (fs::exists(outPath, lec)) {
             try {
                 json out = json::parse(read_file(outPath));
                 bool ok = out.value("ok", true);
                 std::string msg = out.value("message", "");
-                if (!ok)
+                if (!ok) {
+                    std::lock_guard<std::mutex> lk(ioMutex);
                     std::cerr << color::yellow("  ⚠ 插件 ") << p.name << ": " << msg << "\n";
-                else if (!msg.empty() && !g_quiet)
+                } else if (!msg.empty() && !g_quiet) {
+                    std::lock_guard<std::mutex> lk(ioMutex);
                     std::cout << color::green("  ✓ ") << p.name << color::muted(": ") << msg << "\n";
-                if (outs) outs->push_back(std::move(out));   // 供调用方消费（注入片段等）
+                }
+                if (outs) {
+                    std::lock_guard<std::mutex> lk(ioMutex);
+                    outs->push_back(std::move(out));   // 供调用方消费（注入片段等）
+                }
             } catch (...) { /* out.json 非 JSON 时忽略 */ }
         }
-    }
+    };
+
+    // worker pool：互不依赖的插件并行执行（≤硬件并发；单插件时自然串行）
+    size_t n = matches.size();
+    unsigned hw = std::thread::hardware_concurrency();
+    unsigned nThreads = (hw <= 1) ? 1u : std::min<unsigned>(hw, (unsigned)n);
+    std::atomic<size_t> next{0};
+    std::vector<std::thread> pool;
+    pool.reserve(nThreads);
+    for (unsigned t = 0; t < nThreads; ++t)
+        pool.emplace_back([&] {
+            for (;;) {
+                size_t i = next.fetch_add(1, std::memory_order_relaxed);
+                if (i >= n) break;
+                run_one(*matches[i]);
+            }
+        });
+    for (auto& th : pool) th.join();
 }

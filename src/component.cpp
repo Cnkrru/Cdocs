@@ -343,27 +343,28 @@ const json& site_data() {
     if (g_site_data_loaded) return g_site_data;
     std::lock_guard<std::mutex> lk(g_site_data_mtx);
     if (g_site_data_loaded) return g_site_data;   // 双检锁
-    g_site_data_loaded = true;
     std::error_code ec;
     fs::path d = g_engine / "data";
-    if (!fs::is_directory(d, ec)) return g_site_data;
-    std::vector<fs::path> files;
-    for (auto it = fs::directory_iterator(d, ec), end = fs::directory_iterator();
-         it != end; it.increment(ec)) {
-        if (ec) { ec.clear(); continue; }
-        if (it->is_regular_file(ec) && it->path().extension() == ".json") files.push_back(it->path());
-    }
-    std::sort(files.begin(), files.end());
-    for (const auto& f : files) {
-        try {
-            json j = json::parse(read_file(f));
-            if (j.is_object())
-                for (auto it = j.begin(); it != j.end(); ++it) g_site_data[it.key()] = it.value();
-        } catch (...) {
-            if (comp_warned_once("data:" + f.string()))
-                std::cerr << color::warn("警告: ") << "站点数据文件解析失败: " << f << "\n";
+    if (fs::is_directory(d, ec)) {
+        std::vector<fs::path> files;
+        for (auto it = fs::directory_iterator(d, ec), end = fs::directory_iterator();
+             it != end; it.increment(ec)) {
+            if (ec) { ec.clear(); continue; }
+            if (it->is_regular_file(ec) && it->path().extension() == ".json") files.push_back(it->path());
+        }
+        std::sort(files.begin(), files.end());
+        for (const auto& f : files) {
+            try {
+                json j = json::parse(read_file(f));
+                if (j.is_object())
+                    for (auto it = j.begin(); it != j.end(); ++it) g_site_data[it.key()] = it.value();
+            } catch (...) {
+                if (comp_warned_once("data:" + f.string()))
+                    std::cerr << color::warn("警告: ") << "站点数据文件解析失败: " << f << "\n";
+            }
         }
     }
+    g_site_data_loaded = true;   // 注意：必须等加载完成后才置位，否则并发首访的线程会拿到半初始化的 json
     return g_site_data;
 }
 

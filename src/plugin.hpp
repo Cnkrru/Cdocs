@@ -25,4 +25,8 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
 // 是否有已注册插件（有插件时页面渲染退化单线程，保证 on_page_rendered 时序与安全）
 bool plugins_any();
 
+// 是否有插件注册了指定钩子（比 plugins_any 精确：无插件订阅该钩子时，
+// 渲染流程可保持并行，不必因"存在插件"整体退化为单线程）
+bool plugins_hook_registered(const std::string& hook);
+
 #endif  // CDOCS_PLUGIN_HPP

@@ -15,14 +15,20 @@ struct ScInst {
     json props;
     std::string inner;
 };
-static thread_local std::vector<ScInst> g_sc_insts;
-static thread_local std::set<std::string> g_emitted_styles;   // 同文档内组件 <style> 去重（只输出第一份）
+// 每篇文档的 shortcode 状态（实例表 + style 去重集）。
+// 注意：不可用 thread_local——本工具链（MinGW 静态链接）下非平凡 TLS 对象
+// 在 std::thread  worker 退出时析构会堆损坏（0xC0000374，最小复现验证），
+// 改为栈上显式状态逐层传递，天然线程安全。
+struct ScState {
+    std::vector<ScInst> insts;
+    std::set<std::string> emitted;   // 同文档内组件 <style> 去重（只输出第一份）
+};
 static const char* kScTok = "@@CDOCS_SC_";
 static std::string sc_token(int i) { return std::string(kScTok) + std::to_string(i) + "@@"; }
 
 // 组件 HTML 里可内嵌 <style> 块（样式组件化）。同文档多次使用同一组件时
 // style 只输出一次（CSS 全局生效，位置无关）；结构/script 每处保留。
-static std::string dedup_style_blocks(const std::string& html) {
+static std::string dedup_style_blocks(const std::string& html, ScState& st) {
     std::string out;
     out.reserve(html.size());
     size_t pos = 0;
@@ -33,16 +39,16 @@ static std::string dedup_style_blocks(const std::string& html) {
         if (e == std::string::npos) { out += html.substr(pos); break; }  // 未闭合：原样保留
         out += html.substr(pos, s - pos);
         std::string block = html.substr(s, e + 8 - s);
-        if (g_emitted_styles.insert(block).second) out += block;
+        if (st.emitted.insert(block).second) out += block;
         pos = e + 8;
     }
     return out;
 }
 
-static std::string expand_shortcodes(const std::string& html, bool en);
+static std::string expand_shortcodes(const std::string& html, bool en, ScState& st);
 
 // 预扫描：md 原文 → shortcode 替换为占位 token；跳过 fenced code / inline code；\<Name> → &lt;Name&gt;
-static std::string prescan_shortcodes(const std::string& md) {
+static std::string prescan_shortcodes(const std::string& md, ScState& st) {
     std::string out;
     out.reserve(md.size() + 64);
     const size_t n = md.size();
@@ -144,8 +150,8 @@ static std::string prescan_shortcodes(const std::string& md) {
                 }
                 if (ok) {
                     if (selfClose) {
-                        int idx = (int)g_sc_insts.size();
-                        g_sc_insts.push_back({name, props, ""});
+                        int idx = (int)st.insts.size();
+                        st.insts.push_back({name, props, ""});
                         out += sc_token(idx);
                         i = k;
                         continue;
@@ -154,8 +160,8 @@ static std::string prescan_shortcodes(const std::string& md) {
                     size_t close = md.find(closeTag, k);
                     if (close != std::string::npos) {
                         std::string inner = md.substr(k, close - k);
-                        int idx = (int)g_sc_insts.size();
-                        g_sc_insts.push_back({name, props, inner});
+                        int idx = (int)st.insts.size();
+                        st.insts.push_back({name, props, inner});
                         out += sc_token(idx);
                         i = close + closeTag.size();
                         continue;
@@ -175,9 +181,9 @@ static std::string prescan_shortcodes(const std::string& md) {
 }
 
 // 渲染单个 shortcode 实例：innerMd 递归完整管线 → {{slot}}；参数 → props；{{slot_raw}} = 转义原文
-static std::string render_shortcode(int idx, bool en) {
-    if (idx < 0 || idx >= (int)g_sc_insts.size()) return {};
-    ScInst inst = g_sc_insts[idx];   // 值拷贝：prescan 内部 push_back 扩容时本地副本不受影响（防悬垂引用）
+static std::string render_shortcode(int idx, bool en, ScState& st) {
+    if (idx < 0 || idx >= (int)st.insts.size()) return {};
+    ScInst inst = st.insts[idx];   // 值拷贝：prescan 内部 push_back 扩容时本地副本不受影响（防悬垂引用）
     std::string body = load_component(inst.name);
     if (body.empty()) {
         if (comp_warned_once("sc:" + inst.name))
@@ -187,10 +193,10 @@ static std::string render_shortcode(int idx, bool en) {
     }
     std::string innerHtml;
     if (!inst.inner.empty()) {
-        std::string md2 = prescan_shortcodes(inst.inner);
+        std::string md2 = prescan_shortcodes(inst.inner, st);
         std::string h1 = markdown_to_html(md2);
         std::string h2 = render_admonitions(h1, en);
-        innerHtml = expand_shortcodes(h2, en);
+        innerHtml = expand_shortcodes(h2, en, st);
     }
     json ctx = inst.props;
     ctx["slot"] = innerHtml;
@@ -203,7 +209,7 @@ static std::string render_shortcode(int idx, bool en) {
 }
 
 // 渲染后：占位 token → 组件渲染结果（嵌套深度上限 16）
-static std::string expand_shortcodes(const std::string& html, bool en) {
+static std::string expand_shortcodes(const std::string& html, bool en, ScState& st) {
     std::string out;
     out.reserve(html.size() + 256);
     const size_t n = html.size();
@@ -219,7 +225,7 @@ static std::string expand_shortcodes(const std::string& html, bool en) {
                 try { idx = std::stoi(html.substr(e0, e1 - e0)); } catch (...) {}
                 if (idx >= 0 && depth < 16) {
                     ++depth;
-                    out += render_shortcode(idx, en);
+                    out += render_shortcode(idx, en, st);
                     --depth;
                     i = e1 + 2;
                     continue;
@@ -234,10 +240,9 @@ static std::string expand_shortcodes(const std::string& html, bool en) {
 
 // 正文完整管线（shortcode 预扫描 → md4c → admonitions → shortcode 展开）
 std::string render_doc_body(const std::string& md, bool en) {
-    g_sc_insts.clear();
-    g_emitted_styles.clear();
-    std::string md2 = prescan_shortcodes(md);
+    ScState st;   // 栈上状态：每篇文档独立，多线程渲染天然隔离
+    std::string md2 = prescan_shortcodes(md, st);
     // style 去重必须在最终输出做一次（而非组件级）：嵌套组件的 style 嵌在父组件内，
     // 组件级去重会把父组件内部的子组件 style 误删
-    return dedup_style_blocks(expand_shortcodes(render_admonitions(markdown_to_html(md2), en), en));
+    return dedup_style_blocks(expand_shortcodes(render_admonitions(markdown_to_html(md2), en), en, st), st);
 }
