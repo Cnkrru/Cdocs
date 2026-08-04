@@ -163,20 +163,46 @@ void print_summary(BuildContext& b) {
     const fs::path& out_dir = b.out_dir;
 
     int published = 0; for (const auto& p : pages) if (!p.draft || includeDrafts) ++published;
-    std::cout << color::green("已生成 ") << published << color::green(" 篇文档到 ") << out_dir << "\n";
-    const I18nDict& defDict = (i18n.enabled && i18n.dicts.count(i18n.defaultLocale))
-                                  ? i18n.dicts.at(i18n.defaultLocale) : fallbackUI;
-    if (!g_quiet) {
+    // 详细模式（-V/--verbose）：逐页文件清单；默认不显示，终端保持简洁
+    if (g_verbose && !g_quiet) {
+        const I18nDict& defDict = (i18n.enabled && i18n.dicts.count(i18n.defaultLocale))
+                                      ? i18n.dicts.at(i18n.defaultLocale) : fallbackUI;
         for (const auto& p : pages) {
             if (p.draft && !includeDrafts) continue;
             std::cout << "  - " << color::cyan(p.file + ".html") << color::muted("  (")
                       << i18n_replace(p.title, defDict) << color::muted(")\n");
         }
-        std::cout << color::muted("配置: config.json + route/ | 插件: ");
-        for (const auto& p : cfg.plugins) std::cout << color::blue(p) << " ";
-        if (cfg.plugins.empty()) std::cout << color::muted("(默认全开)");
-        std::cout << (cfg.themeVars.empty() ? std::string("") : color::muted(" | 已注入主题变量")) << "\n";
     }
+    // 统计输出目录产物（按扩展名分类，一次性遍历）
+    int htmlCnt = 0, imgCnt = 0, cssCnt = 0, jsCnt = 0, otherCnt = 0;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(out_dir, ec), end = fs::recursive_directory_iterator();
+         it != end; it.increment(ec)) {
+        if (ec) { ec.clear(); continue; }
+        if (!it->is_regular_file(ec)) continue;
+        std::string ext = it->path().extension().string();
+        if      (ext == ".html" || ext == ".htm")                              ++htmlCnt;
+        else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg"
+              || ext == ".gif" || ext == ".webp" || ext == ".svg")             ++imgCnt;
+        else if (ext == ".css")                                                 ++cssCnt;
+        else if (ext == ".js"  || ext == ".mjs")                                ++jsCnt;
+        else                                                                     ++otherCnt;
+    }
+    // ---- 格式化统计块（默认展示）----
+    std::cout << "\n" << color::green("✓ 构建完成") << color::muted(" → ") << out_dir << "\n";
+    std::cout << color::muted("  内容  ") << "文档 " << published << " 篇"
+              << color::muted(" · ") << "博客 " << (int)b.blog_posts.size() << " 篇\n";
+    std::cout << color::muted("  产物  ") << "HTML " << htmlCnt
+              << color::muted(" · ") << "图片 " << imgCnt
+              << color::muted(" · ") << "CSS " << cssCnt
+              << color::muted(" · ") << "JS " << jsCnt
+              << color::muted(" · ") << "其他 " << otherCnt << "\n";
+    if (!g_quiet && !cfg.plugins.empty()) {
+        std::cout << color::muted("  插件  ");
+        for (const auto& p : cfg.plugins) std::cout << color::blue(p) << " ";
+        std::cout << "\n";
+    }
+    std::cout << "\n";
     // i18n 键缺失告警：写错键名 / 字典缺翻译时，页面会显示 {{key}} 字面量，构建期及时指出（不阻塞构建）
     if (!g_i18n_missing.empty() && !g_quiet) {
         std::vector<std::string> uniq;

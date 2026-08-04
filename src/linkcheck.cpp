@@ -126,6 +126,10 @@ fs::path resolve_target(const fs::path& baseDir, const std::string& raw) {
 // 检查单个链接目标是否存在（尝试补 .html / index.html）
 bool target_exists(const fs::path& locOut, const fs::path& rel) {
     if (rel.empty()) return false;
+    // RSS/JSON Feed 是构建收尾产物（RSS 后置到 write_root_feeds_pwa 生成），
+    // linkcheck 在页面渲染阶段运行时它们尚未落盘——特判为合法目标。
+    std::string fname = rel.filename().string();
+    if (fname == "rss.xml" || fname == "feed.json") return true;
     std::error_code ec;
     if (fs::exists(locOut / rel, ec)) return true;
     // 无扩展名：试补 .html；目录：试 /index.html
