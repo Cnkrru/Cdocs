@@ -4,6 +4,7 @@
 #define CDOCS_BUILDER_HPP
 
 #include "core.hpp"
+#include <chrono>
 
 // 构建上下文（run_build 内部状态，跨构建阶段共享）
 struct BuildContext {
@@ -23,6 +24,7 @@ struct BuildContext {
     bool incremental = false;              // 本次构建是否启用增量（serve -w 置位）
     std::map<std::string, std::string> pageSig;  // file+loc -> "mtime:size"（源 .md 指纹）
     bool globalDirty = true;               // 配置/导航/i18n/模板任一变化 → 全量重建
+    std::chrono::steady_clock::time_point t0;  // 构建开始时刻（print_summary 计算总耗时）
 };
 
 // 构建静态站点（默认 docs → dist）

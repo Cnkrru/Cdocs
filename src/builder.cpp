@@ -606,6 +606,7 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
     b.in_dir        = in_dir;
     b.out_dir       = out_dir;
     b.includeDrafts = includeDrafts;
+    b.t0            = std::chrono::steady_clock::now();  // 构建起点（print_summary 输出总耗时）
 
     // 外部脚本插件：扫描 .Cdocs/plugins/*/plugin.json（无插件目录时零开销）
     plugins_scan_all();

@@ -14,6 +14,8 @@
 #include <regex>
 #include <set>
 #include <algorithm>
+#include <chrono>   // 构建耗时统计（steady_clock）
+#include <iomanip>  // std::fixed / std::setprecision
 
 // 4) 多语言根 index.html 重定向到默认语言（单语言模式已在循环中生成，无需重定向）
 void write_root_redirect(BuildContext& b) {
@@ -202,6 +204,11 @@ void print_summary(BuildContext& b) {
         for (const auto& p : cfg.plugins) std::cout << color::blue(p) << " ";
         std::cout << "\n";
     }
+    // 构建总耗时（steady_clock：从 run_build 起点到汇总时刻）
+    double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - b.t0).count();
+    std::cout << color::muted("  耗时  ") << std::fixed << std::setprecision(2)
+              << elapsed << "s\n";
     std::cout << "\n";
     // i18n 键缺失告警：写错键名 / 字典缺翻译时，页面会显示 {{key}} 字面量，构建期及时指出（不阻塞构建）
     if (!g_i18n_missing.empty() && !g_quiet) {
