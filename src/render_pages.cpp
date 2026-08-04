@@ -211,7 +211,8 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
     bool hasPlugs = plugins_hook_registered("on_page_rendered");
     std::vector<char> skip(pages.size(), 0);   // 增量跳过标记（阶段 2 复用）
     // 阶段 1 产物暂存（并发下各线程只写自己索引，安全；阶段 2 只读自身索引）
-    std::vector<std::string> tocHtml(pages.size()), tocNav(pages.size());
+    // 注意：pages[i].html 是共享状态，两 locale 并行渲染时互相覆盖，改用 bodyStore 局部存储
+    std::vector<std::string> bodyStore(pages.size()), tocHtml(pages.size()), tocNav(pages.size());
     std::vector<std::string> metaStore(pages.size());
     std::vector<json> tocItemsStore(pages.size()),
                      crumbsMapStore(pages.size()), headDataStore(pages.size());
@@ -252,17 +253,17 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
         if (!pages[i].dateT) pages[i].dateT = file_mtime_t(f);
         std::string md;
         FrontMatter fm = parse_front_matter(mdRaw, md);   // 剥离 front matter，取到正文与元数据
-        pages[i].html  = render_doc_body(md, rc.curLocale == "en");
+        std::string bodyHtml = render_doc_body(md, rc.curLocale == "en");
         if (pages[i].title.empty()) pages[i].title = extract_title(md, pages[i].file);
         pages[i].lastmod  = fm.lastmod;
         pages[i].aliases  = fm.aliases;
-        TocResult toc = build_toc(pages[i].html);
-        pages[i].html = toc.html;   // 修复：正文必须用注入 slug id 的版本（TOC 锚点/滚动高亮依赖）
+        TocResult toc = build_toc(bodyHtml);
+        bodyStore[i] = toc.html;    // 局部存储：并行安全，不写共享 pages[i].html
         tocHtml[i] = toc.html; tocNav[i] = toc.toc;
-        tocItemsStore[i] = toc.items;   // TOC 数据（TocSidebar 组件）
-        std::string excerpt = collapse_ws(strip_tags(pages[i].html));
+        tocItemsStore[i] = toc.items;
+        std::string excerpt = collapse_ws(strip_tags(bodyStore[i]));
         if (excerpt.size() > 160) excerpt = truncate_utf8(excerpt, 160) + "…";
-        pages[i].desc = fm.description.empty() ? excerpt : fm.description;   // front matter 优先
+        pages[i].desc = fm.description.empty() ? excerpt : fm.description;
         // 面包屑：首页 / 祖先分组 / 当前页（当前页不链接）；子目录页首页链接需 ../ 回退
         std::string up;
         { size_t pos = 0; int d = 0;
@@ -277,7 +278,7 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
             crumbsJson.push_back(json{{"title", c}, {"href", ""}, {"current", false}});
         crumbsJson.push_back(json{{"title", pages[i].title}, {"href", ""}, {"current", true}});
         // 最后更新时间 + 阅读时长（front matter lastmod 优先，否则源 .md 修改时间；数字走令牌插值）
-        auto [cjk, words] = count_words(strip_tags(pages[i].html));
+        auto [cjk, words] = count_words(strip_tags(bodyStore[i]));
         int mins = (int)std::ceil(cjk / 300.0 + words / 200.0);
         if (mins < 1) mins = 1;
         std::string updated = pages[i].lastmod.empty() ? format_mtime(f) : pages[i].lastmod;
@@ -328,7 +329,7 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
         ctx.pager = pager_json(pages, i, relBase);
         ctx.breadcrumb_map = crumbsMapStore[i];
         ctx.edit = edit_json(cfg, pages[i].file);
-        ctx.body = pages[i].html;
+        ctx.body = bodyStore[i];
         ctx.title = pages[i].title;
         ctx.desc = pages[i].desc;
         ctx.last_updated = metaStore[i];
