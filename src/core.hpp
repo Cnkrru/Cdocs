@@ -236,6 +236,9 @@ bool has_plugin(const std::vector<std::string>& plugins, const std::string& name
 void copy_doc_assets(const fs::path& in_dir, const fs::path& out_dir, std::error_code& ec);
 std::string format_mtime(const fs::path& p);
 std::time_t file_mtime_t(const fs::path& p);
+// Unicode 安全取文件 mtime + size：Windows 下 stat() 用 ANSI 编码解析路径，
+// 中文（UTF-8）文件名会 stat 失败，改用 _wstat64（宽字符路径）。返回 0 成功，-1 失败。
+int path_stat(const fs::path& p, std::time_t& mtime, long long& size);
 std::time_t parse_date_str(const std::string& s);
 std::string iso8601(std::time_t t);
 std::string fmt822(std::time_t t);

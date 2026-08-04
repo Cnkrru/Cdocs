@@ -98,9 +98,9 @@ fs::path webpize_file(const fs::path& p, int quality) {
     // 幂等跳过：WebP 副本已存在且不早于原图 → 无需重编
     std::error_code wec;
     if (fs::exists(wp, wec)) {
-        struct stat a, b;
-        if (stat(p.string().c_str(), &a) == 0 && stat(wp.string().c_str(), &b) == 0 &&
-            b.st_mtime >= a.st_mtime)
+        std::time_t amt = 0, bmt = 0; long long asz = 0, bsz = 0;
+        if (path_stat(p, amt, asz) == 0 && path_stat(wp, bmt, bsz) == 0 &&
+            bmt >= amt)
             return wp;
     }
 

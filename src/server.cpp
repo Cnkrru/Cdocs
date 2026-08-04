@@ -145,11 +145,11 @@ static void handle_conn(sock_t c, fs::path root) {
         std::string fn = fp.filename().string();
         if (isAsset || fn == "sw.js" || fn == "manifest.webmanifest" || fn == "icon.svg")
             cacheCtl = "public, max-age=31536000, immutable";
-        struct stat st;
-        if (stat(fp.string().c_str(), &st) == 0) {
+        std::time_t stmt = 0; long long stsz = 0;
+        if (path_stat(fp, stmt, stsz) == 0) {
             char eb[64];
             std::snprintf(eb, sizeof(eb), "\"%llx-%llx\"",
-                          (unsigned long long)st.st_mtime, (unsigned long long)st.st_size);
+                          (unsigned long long)stmt, (unsigned long long)stsz);
             etag = eb;
             // 条件请求：If-None-Match 命中 → 304
             if (header_has(req, "If-None-Match", etag.c_str())) {
@@ -333,11 +333,11 @@ static std::time_t max_mtime(const fs::path& dir) {
     std::error_code ec;
     std::time_t m = 0;
     if (!fs::exists(dir, ec)) return m;
-    struct stat st;
     for (auto it = fs::recursive_directory_iterator(dir, ec);
          !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (stat(it->path().string().c_str(), &st) == 0 && st.st_mtime > m)
-            m = st.st_mtime;
+        std::time_t mt = 0; long long sz = 0;
+        if (path_stat(it->path(), mt, sz) == 0 && mt > m)
+            m = mt;
     }
     return m;
 }

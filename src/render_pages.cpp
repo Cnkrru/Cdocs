@@ -227,10 +227,10 @@ void render_doc_pages(BuildContext& b, const LocaleRenderCtx& rc) {
         if (!fs::exists(f)) { std::cerr << color::error("缺少文件: ") << f << "\n"; return; }
         // 增量构建：源 .md 指纹（mtime:size）未变且输出已存在 → 跳过渲染复用产物。
         // 指纹无论全量/增量都记录（全量也更新 .pages.sig，否则下次增量永不命中）。
-        struct stat fst;
+        std::time_t fst_mt = 0; long long fst_sz = 0;
         std::string sig;
-        if (stat(f.string().c_str(), &fst) == 0) {
-            sig = std::to_string(fst.st_mtime) + ":" + std::to_string((long long)fst.st_size);
+        if (path_stat(f, fst_mt, fst_sz) == 0) {
+            sig = std::to_string((long long)fst_mt) + ":" + std::to_string(fst_sz);
             std::string key = pages[i].file + "|" + (multi ? loc : "");
             if (b.incremental) {
                 fs::path existingOut = rc.locOut / (pages[i].file + ".html");
@@ -440,10 +440,10 @@ void render_blog(BuildContext& b, const LocaleRenderCtx& rc) {
             }
             if (!fs::exists(f)) continue;
             // 增量指纹（与 render_doc_pages 同逻辑）
-            struct stat fst;
+            std::time_t fst_mt = 0; long long fst_sz = 0;
             std::string sig;
-            if (stat(f.string().c_str(), &fst) == 0)
-                sig = std::to_string(fst.st_mtime) + ":" + std::to_string((long long)fst.st_size);
+            if (path_stat(f, fst_mt, fst_sz) == 0)
+                sig = std::to_string((long long)fst_mt) + ":" + std::to_string(fst_sz);
             std::string key = pit->second.file + "|" + (multi ? loc : "");
             if (b.incremental) {
                 fs::path existingOut = rc.locOut / "blog" / (rel + ".html");
@@ -753,9 +753,9 @@ void render_markets(BuildContext& b, const LocaleRenderCtx& rc) {
         std::string mkSig;
         {
             fs::path df = g_engine / "data" / (std::string(m.type) + ".json");
-            struct stat st;
-            if (stat(df.string().c_str(), &st) == 0)
-                mkSig = std::to_string(st.st_mtime);
+            std::time_t mt = 0; long long sz = 0;
+            if (path_stat(df, mt, sz) == 0)
+                mkSig = std::to_string((long long)mt);
         }
         std::string k = std::string(m.type) + "/index|" + rc.curLocale;
         if (b.incremental && !mkSig.empty()) {

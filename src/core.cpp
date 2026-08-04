@@ -159,12 +159,28 @@ void copy_doc_assets(const fs::path& in_dir, const fs::path& out_dir, std::error
     }
 }
 
-// 取文件最后修改时间，格式化为 "YYYY-MM-DD HH:MM"（"最后更新"用）
-// 用 POSIX stat 直接拿到 time_t，避免 file_clock 与各平台 system_clock 基不一致的问题
-std::string format_mtime(const fs::path& p) {
+// Unicode 安全取文件 mtime + size：Windows 下 stat() 用 ANSI 编码解析路径，
+// 中文（UTF-8）文件名会 stat 失败，改用 _wstat64（宽字符路径）。返回 0 成功，-1 失败。
+int path_stat(const fs::path& p, std::time_t& mtime, long long& size) {
+#ifdef _WIN32
+    struct _stat64 st;
+    if (_wstat64(p.c_str(), &st) != 0) return -1;
+    mtime = (std::time_t)st.st_mtime;
+    size = (long long)st.st_size;
+    return 0;
+#else
     struct stat st;
-    if (stat(p.string().c_str(), &st) != 0) return "";
-    std::time_t t = st.st_mtime;
+    if (stat(p.c_str(), &st) != 0) return -1;
+    mtime = (std::time_t)st.st_mtime;
+    size = (long long)st.st_size;
+    return 0;
+#endif
+}
+
+// 取文件最后修改时间，格式化为 "YYYY-MM-DD HH:MM"（"最后更新"用）
+std::string format_mtime(const fs::path& p) {
+    std::time_t t = 0; long long sz = 0;
+    if (path_stat(p, t, sz) != 0) return "";
     std::tm* tm = std::localtime(&t);
     if (!tm) return "";
     char buf[64];
@@ -174,9 +190,9 @@ std::string format_mtime(const fs::path& p) {
 
 // 文件最后修改时间（time_t），供 feed 发布时间与文章时间使用
 std::time_t file_mtime_t(const fs::path& p) {
-    struct stat st;
-    if (stat(p.string().c_str(), &st) != 0) return std::time(nullptr);
-    return (std::time_t)st.st_mtime;
+    std::time_t t = 0; long long sz = 0;
+    if (path_stat(p, t, sz) != 0) return std::time(nullptr);
+    return t;
 }
 // 解析 front matter 的 date（"2026-08-01" 或带时间 "2026-08-01T12:00:00"），失败返回 0
 std::time_t parse_date_str(const std::string& s) {

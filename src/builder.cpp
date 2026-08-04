@@ -606,8 +606,8 @@ static void render_locales(BuildContext& b) {
     // 目录级快检：两个根目录 mtime 最大值
     std::time_t dirSig = 0;
     for (const auto& ap : {theme_root() / "assets", g_engine / "deps"}) {
-        struct stat st;
-        if (stat(ap.string().c_str(), &st) == 0 && st.st_mtime > dirSig) dirSig = st.st_mtime;
+        std::time_t mt = 0; long long sz = 0;
+        if (path_stat(ap, mt, sz) == 0 && mt > dirSig) dirSig = mt;
     }
     std::string dirPrev = fs::exists(aSigDir, aec) ? trim(read_file(aSigDir)) : std::string();
     bool assetsChanged = (dirPrev != std::to_string(dirSig));
@@ -622,8 +622,8 @@ static void render_locales(BuildContext& b) {
                  it != end; it.increment(rec)) {
                 if (rec) { rec.clear(); continue; }
                 if (!it->is_regular_file(rec)) continue;
-                struct stat ast;
-                if (stat(it->path().string().c_str(), &ast) == 0 && ast.st_mtime > asig) asig = ast.st_mtime;
+                std::time_t amt = 0; long long asz = 0;
+                if (path_stat(it->path(), amt, asz) == 0 && amt > asig) asig = amt;
             }
         }
         std::string aPrevFull = fs::exists(aSigFile, aec) ? trim(read_file(aSigFile)) : std::string();
@@ -749,8 +749,8 @@ int run_build(fs::path in_dir, fs::path out_dir, bool includeDrafts, bool cleanB
                               theme_root() / "theme.json",
                               theme_root() / "templates",
                               theme_root() / "assets"}) {
-            struct stat st;
-            if (stat(p.string().c_str(), &st) == 0 && st.st_mtime > sig) sig = st.st_mtime;
+            std::time_t mt = 0; long long sz = 0;
+            if (path_stat(p, mt, sz) == 0 && mt > sig) sig = mt;
         }
         // 与上次构建签名比较（存 .build/.sig 文件）
         fs::path buildDir = g_engine / ".build";
