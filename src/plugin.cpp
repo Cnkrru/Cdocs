@@ -410,7 +410,8 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
     auto run_one = [&](const Plugin& p) {
         const PluginHook& h = p.hooks.at(hook);
 
-        // 持久进程优先：Python 插件（cmd 以 "python " 开头）首次 spawn 后复用
+        // 持久进程优先（仅 Windows）：Python 插件 spawn 后 stdin/stdout 复用
+#ifdef _WIN32
         bool isPython = (h.cmd.rfind("python ", 0) == 0 || h.cmd.rfind("python3 ", 0) == 0);
         if (isPython) {
             if (!g_quiet) {
@@ -428,6 +429,7 @@ void run_plugin_hooks(const std::string& hook, const json& ctx,
             }
             // 失败回退：持久进程可能崩溃/超时，走常规子进程路径
         }
+#endif
 
         // 一次性子进程（持久未启用或失败回退）
         std::error_code lec;
